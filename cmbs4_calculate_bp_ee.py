@@ -11,6 +11,10 @@ NPIX = 12*NSIDE**2
 ELLMAX = 3*NSIDE-1
 NSPH = int(np.sum(1.0 * np.arange(ELLMAX+1) + 1.0))
 
+FWHM = 24.2
+sigma_rad = (FWHM/(np.sqrt(8*np.log(2))))*(np.pi/(60*180))
+B_ell_squared = [np.e**((-1)*(index**2)*(sigma_rad**2)) for index in range(ELLMAX)]
+
 dls = np.genfromtxt("/fs/project/PES0740/sky_yy/cmb/cls/ffp10_lensedCls.dat")
 dls = np.insert(dls, [0], [1,0,0,0,0], axis = 0)
 dls = np.insert(dls, [0], [0,0,0,0,0], axis = 0)
@@ -27,7 +31,7 @@ tot_binned_bspec = np.empty([370, 10])
 for input_ell in range(370):
     print(input_ell)
     input_pspec = np.zeros(ELLMAX)
-    input_pspec[input_ell] = 1.0
+    input_pspec[input_ell] = 1.0*B_ell_squared[input_ell]*2*np.pi/(input_ell*(input_ell+1))
     i_q_u = hp.synfast((np.zeros(ELLMAX),input_pspec,np.zeros(ELLMAX),np.zeros(ELLMAX)), NSIDE, pol=True, new=True)
     output_almsbb = msg.iterate_withbeam(Ndiag, i_q_u, c_ells_t[3,:1535], eta = 8.25/10)
     output_bspec = hp.alm2cl(output_almsbb[NSPH:], lmax = ELLMAX)
@@ -35,9 +39,4 @@ for input_ell in range(370):
     binned_bspec_dl = msg.bin_pspec(output_bbdl, 20, 370, 35)
     tot_binned_bspec[input_ell,:] = binned_bspec_dl
 
-tot_bpwf_empty=np.empty([370,10])
-for i in range(10):
-    tot_binned_bpwf = np.array([data * 2 * np.pi/(i*(i+1)) for i,data in enumerate(tot_binned_bspec[:,i])])
-    tot_bpwf_empty[:,i] = tot_binned_bpwf
-
-np.savez('binned_ee2bb_bpwf_24iter_sim{}.npz'.format(INDEX), tot_bpwf_empty)
+np.savez('binned_ee2bb_bpwf_24iter_sim{}.npz'.format(INDEX), tot_binned_bspec)
