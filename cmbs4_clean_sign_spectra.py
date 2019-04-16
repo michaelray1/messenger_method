@@ -2,7 +2,6 @@ import os
 os.chdir('/users/PES0740/ucn3066/messenger')
 import healpy as hp
 import numpy as np
-import matplotlib.pyplot as plt
 import sys
 import messenger as msg
 
@@ -15,7 +14,7 @@ mask = hp.read_map('512.fits')
 mask_nans = np.where(np.isnan(mask))
 mask[np.isnan(mask)] = 1e-10
 
-dls = np.genfromtxt("Dl's for TT, EE, BB, TE.txt")
+dls = np.genfromtxt("/fs/project/PES0740/sky_yy/cmb/cls/ffp10_lensedCls.dat")
 dls = np.insert(dls, [0], [1,0,0,0,0], axis = 0)
 dls = np.insert(dls, [0], [0,0,0,0,0], axis = 0)
 d_ell = np.array([dls[:,0]])
@@ -33,7 +32,7 @@ for i in range(100):
     binned_delltwid[:,i] = msg.bin_pspec(d_elltwid[i,:],20,370,35)
 
 os.chdir('/users/PES0740/ucn3066/messenger/CMBS4/Noise')
-binned_noisebias = np.load('noise_bias_ellmin20_ellmax370_binsize35.npz')['arr_0']
+binned_noisebias = np.load('noise_bias_ellmin20_ellmax370_binsize35_dl.npz')['arr_0']
 
 os.chdir('/users/PES0740/ucn3066/messenger/CMBS4/bpwf/BB2BB')
 binned_sup_facs = np.load('take2_summed_bpwf.npz')['arr_0']
