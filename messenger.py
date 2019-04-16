@@ -9,6 +9,7 @@ import os
 import healpy as hp
 import numpy as np
 import matplotlib.pyplot as plt
+import sys
 
 def ell2alm(list_of_ells):
     """Parameters
