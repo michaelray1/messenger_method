@@ -14,13 +14,14 @@ mask = hp.read_map('512.fits')
 mask_nans = np.where(np.isnan(mask))
 mask[np.isnan(mask)] = 1e-10
 
-cls = np.genfromtxt("/fs/project/PES0740/sky_yy/cmb/cls/ffp10_lensedCls.dat")
-cls = np.insert(cls, [0], [1,0,0,0,0], axis = 0)
-cls = np.insert(cls, [0], [0,0,0,0,0], axis = 0)
-c_ell = np.array([cls[:,0]])
-c_spectra = cls[:,1:]
-c_ells = np.concatenate((np.transpose(c_ell), c_spectra), axis = 1)
-c_ells_t = np.transpose(c_spectra)
+dls = np.genfromtxt("/fs/project/PES0740/sky_yy/cmb/cls/ffp10_lensedCls.dat")
+dls = np.insert(dls, [0], [1,0,0,0,0], axis = 0)
+dls = np.insert(dls, [0], [0,0,0,0,0], axis = 0)
+d_ell = np.array([dls[:,0]])
+d_spectra = dls[:,1:]
+Cls = np.array([d_spectra[i]*2*np.pi/(i * (i+1)) for i in range(len(d_spectra))])
+c_ells = np.concatenate((np.transpose(d_ell), Cls), axis = 1)
+c_ells_t = np.transpose(c_ells)
 B_pspec_cov = c_ells_t[3]
 input_sup_BB = c_ells_t[3]
 

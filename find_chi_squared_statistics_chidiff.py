@@ -24,8 +24,8 @@ c_ells = np.concatenate((np.transpose(d_ell), Cls), axis = 1)
 c_ells_t = np.transpose(c_ells)
 B_pspec_cov = c_ells_t[3,:1535]
 
-s1, chi_squared1, lamlist1, chidifflist1 = msg.iterate_chidiff_steps(Ndiag, i_q_u, B_pspec_cov, 1, 100, 3, chi_diff = 200)
+s1, chi_squared1, lamlist1, chidifflist1 = msg.iterate_chidiff_steps(Ndiag, i_q_u, B_pspec_cov, 1, 100, 3, chi_diff = 350)
 os.chdir('/users/PES0740/ucn3066/messenger/Chi_squared_stats')
-np.savez('chi_square_maxlam100_minlam1_stepsize3_chidiff_varied200.npz',chi_squared1)
-np.savez('lambda_vals_maxlam100_minlam1_stepsize3_chidiff_varied200.npz',lamlist1)
-np.savez('chi_square_differences_maxlam100_minlam1_stepsize3_chidiff_varied200.npz', chidifflist1)
+np.savez('chi_square_maxlam100_minlam1_stepsize3_chi_difference200.npz',chi_squared1)
+np.savez('lambda_vals_maxlam100_minlam1_stepsize3_chi_difference200.npz',lamlist1)
+np.savez('chi_square_differences_maxlam100_minlam1_stepsize3_chi_difference200.npz', chidifflist1)

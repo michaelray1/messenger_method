@@ -24,11 +24,11 @@ c_ells = np.concatenate((np.transpose(d_ell), Cls), axis = 1)
 c_ells_t = np.transpose(c_ells)
 B_pspec_cov = c_ells_t[3,:1535]
 
-s1, chi_squared1, lamlist1 = msg.iterate_untilchi_steps(Ndiag, i_q_u, B_pspec_cov, 1, 16, 3, min_chi = 1.5*10**6)
+s1, chi_squared1, lamlist1 = msg.iterate_untilchi_steps(Ndiag, i_q_u, B_pspec_cov, 1, 16, 3, min_chi = 1.75*10**6)
 os.chdir('/users/PES0740/ucn3066/messenger/Chi_squared_stats')
-np.savez('chi_square_maxlam16_minlam1_stepsize3_minchi1.5e6.npz',chi_squared1)
-np.savez('lambda_vals_maxlam16_minlam1_stepsize3_minchi1.5e6.npz',lamlist1)
+np.savez('chi_square_maxlam16_minlam1_stepsize3_minchi1.75e6.npz',chi_squared1)
+np.savez('lambda_vals_maxlam16_minlam1_stepsize3_minchi1.75e6.npz',lamlist1)
 
-s2, chi_squared2, lamlist2 = msg.iterate_untilchi_eta(Ndiag, i_q_u, B_pspec_cov, 50, 0.6, min_chi = 1.5*10**6)
-np.savez('chi_square_maxlam50_minchi1.5e6_eta06.npz',chi_squared2)
-np.savez('lambda_vals_maxlam50_minchi1.5e6_eta06.npz',lamlist2)
+s2, chi_squared2, lamlist2 = msg.iterate_untilchi_eta(Ndiag, i_q_u, B_pspec_cov, 50, 0.6, min_chi = 1.75*10**6)
+np.savez('chi_square_maxlam50_minchi1.75e6_eta06.npz',chi_squared2)
+np.savez('lambda_vals_maxlam50_minchi1.75e6_eta06.npz',lamlist2)
