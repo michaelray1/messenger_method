@@ -10,6 +10,7 @@ import healpy as hp
 import numpy as np
 import matplotlib.pyplot as plt
 import sys
+from scipy.optimize import minimize
 
 def ell2alm(list_of_ells):
     """Parameters
@@ -51,6 +52,7 @@ def signal_diag(inputTT, NSIDE = 512):
 def iterate_withbeam(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100, eta = 7/10):
     """
     Parameters
+
     Ndiag: Give a 1-D vector that represents the diagonal of the noise covariance
         matrix. In simulations, this was two copies of the inverse of the mask
         on top of each other. These served to mask the Q and U maps from the data
@@ -67,9 +69,13 @@ def iterate_withbeam(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100, eta = 7/10):
         value is 7/10
 
     Returns
+
     A 1-D vector with size NSPH * 2. The first NSPH entries in this will be the
     alm's for the E mode. The last NSPH entries in this will be the alm's for the
-    B mode. Also returns a list of chi-squared statistics calculated on each iteration."""
+    B mode. Also returns a list of chi-squared statistics calculated on each iteration.
+    Also returns a list of iqu maps calculated on each iteration. Also returns a list
+    of lambda values that represent the lambda used on each iteration.
+    """
     NPIX = len(i_q_u[0])
     NSIDE = int(np.sqrt(NPIX/12))
     ELLMAX = 3*NSIDE - 1
@@ -89,7 +95,9 @@ def iterate_withbeam(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100, eta = 7/10):
     B_pseudo[np.where(np.isnan(B_pseudo))] = 0.0
     s = np.zeros(NPIX*2)
     tpix = data
+    iqu_list = []
     chi_squared_list = []
+    lambda_list = []
     while lambdaone >= 1:
         tpix = (Ntilde_inv * data + (lambdaone * Tdiag_pix)**(-1) * s) * (Ntilde_inv + (lambdaone * Tdiag_pix)**(-1))**(-1)
         tpix_q = tpix[:NPIX]
@@ -103,46 +111,52 @@ def iterate_withbeam(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100, eta = 7/10):
         ssph_b = ssph[NSPH:]
         weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
         s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
-        chi_squared_left = np.dot(ssph,S_B*ssph)
-        chi_squared_right = np.dot((data - s),(Ndiag + (lambdaone - 1)*Tdiag_pix)**(-1)*(data - s))
-        chi_squared = chi_squared_left + chi_squared_right
+        chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
         chi_squared_list.append(chi_squared)
+        iqu_list.append(weiner_iqu)
         lambdaone = lambdaone*eta
+        lambda_list.append(lambdaone)
+    i = 0
     lambdaone = 1
-    tpix = (Ntilde_inv * data + (lambdaone * Tdiag_pix)**(-1) * s) * (Ntilde_inv + (lambdaone * Tdiag_pix)**(-1))**(-1)
-    tpix_q = tpix[:NPIX]
-    tpix_u = tpix[NPIX:]
-    t_e_b = hp.map2alm((i_q_u[0], tpix_q, tpix_u), lmax=ELLMAX, pol=True)
-    tsph_e = t_e_b[1]
-    tsph_b = t_e_b[2]
-    tsph = np.concatenate((tsph_e, tsph_b), axis = 0)
-    ssph = (B_pseudo + (lambdaone * Tdiag_sph)**(-1))**(-1) * (lambdaone * Tdiag_sph)**(-1) * tsph
-    ssph_e = ssph[:NSPH]
-    ssph_b = ssph[NSPH:]
-    weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
-    s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
+    while i < 5:
+        tpix = (Ntilde_inv * data + (lambdaone * Tdiag_pix)**(-1) * s) * (Ntilde_inv + (lambdaone * Tdiag_pix)**(-1))**(-1)
+        tpix_q = tpix[:NPIX]
+        tpix_u = tpix[NPIX:]
+        t_e_b = hp.map2alm((i_q_u[0], tpix_q, tpix_u), lmax=ELLMAX, pol=True)
+        tsph_e = t_e_b[1]
+        tsph_b = t_e_b[2]
+        tsph = np.concatenate((tsph_e, tsph_b), axis = 0)
+        ssph = (B_pseudo + (lambdaone * Tdiag_sph)**(-1))**(-1) * (lambdaone * Tdiag_sph)**(-1) * tsph
+        ssph_e = ssph[:NSPH]
+        ssph_b = ssph[NSPH:]
+        weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
+        s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
+        chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
+        chi_squared_list.append(chi_squared)
+        iqu_list.append(weiner_iqu)
+        lambda_list.append(lambdaone)
+        i += 1
     s_final = S_B * B_pseudo * ssph
-    return s_final, chi_squared_list
+    return s_final, iqu_list, chi_squared_list, lambda_list
 
-def iterate_fixedlam(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100):
-    """                                                                                                                                                                                                                                      
-    Parameters                                                                                                                                                                                                                              
-    Ndiag: Give a 1-D vector that represents the diagonal of the noise covariance                                                                                                         
-        matrix. In simulations, this was two copies of the inverse of the mask                                                                                                           
-        on top of each other. These served to mask the Q and U maps from the data                                                                                                            
-        vector independently. Ndiag should be size NPIX*2                                                                                                                                    
-    i_q_u: This is a 3 by NPIX size matrix with the first column of the matrix                                                                                                                
-        being an I map, the second being a Q map and the third being a U map.                                                                                                              
-        This should be measured data.                                                                                                                                                      
-    B_pspec_cov: Give a 1-D vector that is size ELLMAX and represents the theoretical                                                                                                      
-        B power spectrum of the data.This is used to calculate the B covariance                                                            
-        matrix.                                                                                                                                                                           
-    lambdaone: Give the value for lambda in the iterative                                                                                                                              
-        algorithm. The default value is 100.                                                                                                                                                                                        
-    Returns                                                                                                                                                                                                                               
-    A 1-D vector with size NSPH * 2. The first NSPH entries in this will be the                                                                                                         
-    alm's for the E mode. The last NSPH entries in this will be the alm's for the                                                                                                        
-    B mode. Also returns a list of chi-squared statistics calculated on each iteration."""
+def iterate_fixedlam(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100, NSIMS = 10):
+    """                                                                                        Parameters                                                                                 Ndiag: Give a 1-D vector that represents the diagonal of the noise covariance
+        matrix. In simulations, this was two copies of the inverse of the mask
+        on top of each other. These served to mask the Q and U maps from the data
+        vector independently. Ndiag should be size NPIX*2                
+    i_q_u: This is a 3 by NPIX size matrix with the first column of the matrix
+        being an I map, the second being a Q map and the third being a U map.
+        This should be measured data.          
+    B_pspec_cov: Give a 1-D vector that is size ELLMAX and represents the theoretical
+        B power spectrum of the data.This is used to calculate the B covariance
+        matrix.                                                                                lambdaone: Give the value for lambda in the iterative algorithm. The default 
+        value is 100.    
+    NSIMS: Give an integer that is the number of iterations that will run.
+    
+    Returns                                                                                                                                                       
+    A 1-D vector with size NSPH * 2. The first NSPH entries in this will be the alm's for 
+    the E mode. The last NSPH entries in this will be the alm's for the B mode. Also 
+    returns a list of chi-squared statistics calculated on each iteration."""
     NPIX = len(i_q_u[0])
     NSIDE = int(np.sqrt(NPIX/12))
     ELLMAX = 3*NSIDE - 1
@@ -165,7 +179,7 @@ def iterate_fixedlam(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100):
     tpix = data
     chi_squared_list = []
     i = 0
-    while i <= 10:
+    while i <= NSIMS:
         tpix = (Ntilde_inv * data + (lambdaone * Tdiag_pix)**(-1) * s) * (Ntilde_inv + (lambdaone * Tdiag_pix)**(-1))**(-1)
         tpix_q = tpix[:NPIX]
         tpix_u = tpix[NPIX:]
@@ -178,36 +192,37 @@ def iterate_fixedlam(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100):
         ssph_b = ssph[NSPH:]
         weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
         s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
-        chi_squared = np.dot(ssph,S_B*ssph) + np.dot((data - s),(Ndiag + (lambdaone - 1)*Tdiag_pix)**(-1)*(data - s))
+        chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
         chi_squared_list.append(chi_squared)
         i += 1
     s_final = S_B * B_pseudo * ssph
     return s_final, chi_squared_list
 
 def iterate_declam(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize):
-    """                                                                                                                                                                                                                                      
-    Parameters                                                                                                                                                                 
-                                                                                                                                                                                          
-    Ndiag: Give a 1-D vector that represents the diagonal of the noise covariance                                                                                                    
-        matrix. In simulations, this was two copies of the inverse of the mask                                                                                                            
-        on top of each other. These served to mask the Q and U maps from the data                                                                                                     
-        vector independently. Ndiag should be size NPIX*2                                                                                                                                 
-    i_q_u: This is a 3 by NPIX size matrix with the first column of the matrix                                                                                                            
-        being an I map, the second being a Q map and the third being a U map.                                                                                                             
-        This should be measured data.                                                                                                                                                      
+    """
+    Parameters
+
+    Ndiag: Give a 1-D vector that represents the diagonal of the noise covariance 
+        matrix. In simulations, this was two copies of the inverse of the mask 
+        on top of each other. These served to mask the Q and U maps from the data 
+        vector independently. Ndiag should be size NPIX*2.
+    i_q_u: This is a 3 by NPIX size matrix with the first column of the matrix 
+        being an I map, the second being a Q map and the third being a U map. 
+        This should be measured data.
     B_pspec_cov: Give a 1-D vector that is size ELLMAX and represents the theoretical
-        B power spectrum of the data.This is used to calculate the B covariance                                                                                                           
-        matrix.                                                                                                                                                                         
+        B power spectrum of the data.This is used to calculate the B covariance matrix.
     min_lam: Give the minimum value of lambda
     max_lam: Give the maximum value of lambda
     stepsize: Give the size of step you want between successive values of lambda.
         For example, max_lam = 5, min_lam = 1, stepsize = 2 would give lambda values
         of 1, 3, 5.
-                                                                                                                                                                                                                           
-    Returns                                                                                                                                                                                                                                 
-    A 1-D vector with size NSPH * 2. The first NSPH entries in this will be the                                                                                                            
-    alm's for the E mode. The last NSPH entries in this will be the alm's for the                                                                                                         
-    B mode. Also returns a list of chi-squared statistics calculated on each iteration."""
+
+    Returns
+
+    A 1-D vector with size NSPH * 2. The first NSPH entries in this will be the
+    alm's for the E mode. The last NSPH entries in this will be the alm's for the
+    B mode. Also returns a list of chi-squared statistics calculated on each iteration.
+    """
     NPIX = len(i_q_u[0])
     NSIDE = int(np.sqrt(NPIX/12))
     ELLMAX = 3*NSIDE - 1
@@ -244,7 +259,7 @@ def iterate_declam(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize):
         ssph_b = ssph[NSPH:]
         weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
         s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
-        chi_squared = np.dot(ssph,S_B*ssph) + np.dot((data - s),(Ndiag + (lambdaone - 1)*Tdiag_pix)**(-1)*(data - s))
+        chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
         chi_squared_list.append(chi_squared)
         lambda_list.append(lambdaone)
         i += 1
@@ -259,30 +274,30 @@ def iterate_declam(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize):
 
 
 def iterate_untilchi_steps(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize, min_chi = 10**6):
-    """                                                                                                                                                                                                                                      
+    """
     Parameters                                                                                                                                                                                                                                                                                                                                                                                                                          
-    Ndiag: Give a 1-D vector that represents the diagonal of the noise covariance                                                                                                                                  
-        matrix. In simulations, this was two copies of the inverse of the mask                                                                                                                                    
-        on top of each other. These served to mask the Q and U maps from the data                                                                                                                                 
-        vector independently. Ndiag should be size NPIX*2                                                                                                                                                          
-    i_q_u: This is a 3 by NPIX size matrix with the first column of the matrix                                                                                                                                     
-        being an I map, the second being a Q map and the third being a U map.                                                                                                                                     
-        This should be measured data.                                                                                                                                                                              
-    B_pspec_cov: Give a 1-D vector that is size ELLMAX and represents the theoretical                                                                                                                             
-        B power spectrum of the data.This is used to calculate the B covariance                                                                                                                                  
-        matrix.                                                                                                                                                                                                   
-    min_lam: Give the minimum value of lambda                                                                                                                                                                      
-    max_lam: Give the maximum value of lambda                                                                                                                                                                     
-    stepsize: Give the size of step you want between successive values of lambda.                                                                                                                                 
-        For example, max_lam = 5, min_lam = 1, stepsize = 2 would give lambda values                                                                                                                            
-        of 1, 3, 5.                                                                                                                                                                                               
+    Ndiag: Give a 1-D vector that represents the diagonal of the noise covariance                                                                              
+        matrix. In simulations, this was two copies of the inverse of the mask                                                                                
+        on top of each other. These served to mask the Q and U maps from the data                                                                             
+        vector independently. Ndiag should be size NPIX*2                                                                                                     
+    i_q_u: This is a 3 by NPIX size matrix with the first column of the matrix                                                                             
+        being an I map, the second being a Q map and the third being a U map.                                                                                  
+        This should be measured data.                                                                                                                         
+    B_pspec_cov: Give a 1-D vector that is size ELLMAX and represents the theoretical                                                                          
+        B power spectrum of the data.This is used to calculate the B covariance                                                                             
+        matrix.                                                                                                                                                
+    min_lam: Give the minimum value of lambda                                                                                                                 
+    max_lam: Give the maximum value of lambda                                                                                                                 
+    stepsize: Give the size of step you want between successive values of lambda.                                                                             
+        For example, max_lam = 5, min_lam = 1, stepsize = 2 would give lambda values                                                                          
+        of 1, 3, 5.                                                                                                                                           
     min_chi: Give the value at which the filter will lower the value of lambda when
         chi_squared * lambda gets lower than min_chi. Once lambda * chi_squared goes
         min_chi, the filter will lower the value of lambda.
-    
-    Returns                                                                                                                                                                                                                                   
-    A 1-D vector with size NSPH * 2. The first NSPH entries in this will be the                                                                                                                                   
-    alm's for the E mode. The last NSPH entries in this will be the alm's for the                                                                                                                           
+
+    Returns                                                                                                                                                                                                               
+    A 1-D vector with size NSPH * 2. The first NSPH entries in this will be the                                                                                
+    alm's for the E mode. The last NSPH entries in this will be the alm's for the                                                                              
     B mode. Also returns a list of chi-squared statistics calculated on each iteration."""
     NPIX = len(i_q_u[0])
     NSIDE = int(np.sqrt(NPIX/12))
@@ -320,7 +335,7 @@ def iterate_untilchi_steps(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize
         ssph_b = ssph[NSPH:]
         weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
         s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
-        chi_squared = np.dot(ssph,S_B*ssph) + np.dot((data - s),(Ndiag + (lambdaone - 1)*Tdiag_pix)**(-1)*(data - s))
+        chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
         chi_squared_list.append(chi_squared)
         lambda_list.append(lambdaone)
         while lambdaone*chi_squared > min_chi:
@@ -336,7 +351,7 @@ def iterate_untilchi_steps(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize
             ssph_b = ssph[NSPH:]
             weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
             s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
-            chi_squared = np.dot(ssph,S_B*ssph) + np.dot((data - s),(Ndiag + (lambdaone - 1)*Tdiag_pix)**(-1)*(data - s))
+            chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
             chi_squared_list.append(chi_squared)
             lambda_list.append(lambdaone)
     s_final = S_B * B_pseudo * ssph
@@ -344,23 +359,23 @@ def iterate_untilchi_steps(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize
 
 
 def iterate_chidiff_steps(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize, init_chi = 2*10**7, chi_diff = 3500):
-    """                                                                                                                                                                                                            
-    Parameters                                                                                                                                                                                                                                                                                                                                                                                                             
-    Ndiag: Give a 1-D vector that represents the diagonal of the noise covariance                                                                                                                                
-        matrix. In simulations, this was two copies of the inverse of the mask                                                                                                                                   
-        on top of each other. These served to mask the Q and U maps from the data                                                                                                                                 
-        vector independently. Ndiag should be size NPIX*2                                                                                                                                                        
-    i_q_u: This is a 3 by NPIX size matrix with the first column of the matrix                                                                                                                                   
-        being an I map, the second being a Q map and the third being a U map.                                                                                                                                     
-        This should be measured data.                                                                                                                                                                       
-    B_pspec_cov: Give a 1-D vector that is size ELLMAX and represents the theoretical                                                                                       
-        B power spectrum of the data.This is used to calculate the B covariance                                                                                                                                    
-        matrix.                                                                                                                                                                                                   
-    min_lam: Give the minimum value of lambda                                                                                                                                                                     
-    max_lam: Give the maximum value of lambda                                                                                                                                                                   
-    stepsize: Give the size of step you want between successive values of lambda.                                                                                                                                 
-        For example, max_lam = 5, min_lam = 1, stepsize = 2 would give lambda values                                                                                                                              
-        of 1, 3, 5.                                                                                                                                                                                               
+    """                                                                                                                                                          
+    Parameters                                                                                                                                                                                                                                                                                                                                                                                               
+    Ndiag: Give a 1-D vector that represents the diagonal of the noise covariance                                                                             
+        matrix. In simulations, this was two copies of the inverse of the mask                                                                                
+        on top of each other. These served to mask the Q and U maps from the data                                                                              
+        vector independently. Ndiag should be size NPIX*2                                                                                                     
+    i_q_u: This is a 3 by NPIX size matrix with the first column of the matrix                                                                                 
+        being an I map, the second being a Q map and the third being a U map.                                                                                  
+        This should be measured data.                                                                                                                         
+    B_pspec_cov: Give a 1-D vector that is size ELLMAX and represents the theoretical                                                                        
+        B power spectrum of the data.This is used to calculate the B covariance                                                                            
+        matrix.                                                                                                                                                
+    min_lam: Give the minimum value of lambda                                                                                                                
+    max_lam: Give the maximum value of lambda                                                                                                                 
+    stepsize: Give the size of step you want between successive values of lambda.                                                                              
+        For example, max_lam = 5, min_lam = 1, stepsize = 2 would give lambda values                                                                           
+        of 1, 3, 5.                                                                                                                                           
     init_chi: Give the initial value of chi_squared. This value doesn't matter very much
         as long as it is large enough such that the next chi_squared value is not within
         chi_diff of init_chi. If init_chi is closer than chi_diff to the next value
@@ -369,11 +384,11 @@ def iterate_chidiff_steps(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize,
     chi_diff: Give the difference between successive chi_squared values that indicates the 
         chi_squared has plateaued. When this difference between chi_squared values is hit, the
         filter will break out of the loop and change lambda. Default value is 3500.
-                                                                                                                                                                                                                  
-    Returns                                                                                                                                                                                                      
-                                                                                                                                                                                                                   
-    A 1-D vector with size NSPH * 2. The first NSPH entries in this will be the                                                                                                                                   
-    alm's for the E mode. The last NSPH entries in this will be the alm's for the                                                                                                                             
+                                                                                                                                                              
+    Returns                                                                                                                                                
+                                                                                                                                                              
+    A 1-D vector with size NSPH * 2. The first NSPH entries in this will be the                                                                              
+    alm's for the E mode. The last NSPH entries in this will be the alm's for the                                                                            
     B mode. Also returns a list of chi-squared statistics calculated on each iteration.
     Also returns a list of the difference in successive values of chi squared on each 
     iteration.
@@ -417,7 +432,7 @@ def iterate_chidiff_steps(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize,
         ssph_b = ssph[NSPH:]
         weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
         s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
-        chi_squared = np.dot(ssph,S_B*ssph) + np.dot((data - s),(Ndiag + (lambdaone - 1)*Tdiag_pix)**(-1)*(data - s))
+        chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
         chi_squared_list.append(chi_squared)
         lambda_list.append(lambdaone)
         i += 1
@@ -434,7 +449,7 @@ def iterate_chidiff_steps(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize,
             ssph_b = ssph[NSPH:]
             weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
             s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
-            chi_squared = np.dot(ssph,S_B*ssph) + np.dot((data - s),(Ndiag + (lambdaone - 1)*Tdiag_pix)**(-1)*(data - s))
+            chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
             chi_squared_list.append(chi_squared)
             chi_diff_list.append(chi_squared_list[i-1] - chi_squared_list[i])
             lambda_list.append(lambdaone)
@@ -445,30 +460,30 @@ def iterate_chidiff_steps(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize,
 
 
 def iterate_untilchi_eta(Ndiag, i_q_u, B_pspec_cov, max_lam, eta, min_chi = 10**6):
-    """                                                                                                                                                                                                           
-    Parameters                                                                                                                                                                                                 
-                                                                                                                                                                                                                   
-    Ndiag: Give a 1-D vector that represents the diagonal of the noise covariance                                                                                                                                  
-        matrix. In simulations, this was two copies of the inverse of the mask                                                                                                                                    
-        on top of each other. These served to mask the Q and U maps from the data                                                                                                                                  
-        vector independently. Ndiag should be size NPIX*2                                                                                                                                                         
-    i_q_u: This is a 3 by NPIX size matrix with the first column of the matrix                                                                                                                                    
-        being an I map, the second being a Q map and the third being a U map.                                                                                                                                     
-        This should be measured data.                                                                                                                                                                                 
-    B_pspec_cov: Give a 1-D vector that is size ELLMAX and represents the theoretical                                                                                                                              
-        B power spectrum of the data.This is used to calculate the B covariance                                                                                                                                   
-        matrix.                                                                                                                                                                                                   
-    max_lam: Give the starting value of lambda                                                                                                                                                                   
+    """                                                                                                                                                        
+    Parameters                                                                                                                                                
+                                                                                                                                                           
+    Ndiag: Give a 1-D vector that represents the diagonal of the noise covariance                                                                          
+        matrix. In simulations, this was two copies of the inverse of the mask                                                                               
+        on top of each other. These served to mask the Q and U maps from the data                                                                           
+        vector independently. Ndiag should be size NPIX*2                                                                                                      
+    i_q_u: This is a 3 by NPIX size matrix with the first column of the matrix                                                                                
+        being an I map, the second being a Q map and the third being a U map.                                                                                 
+        This should be measured data.                                                                                                                         
+    B_pspec_cov: Give a 1-D vector that is size ELLMAX and represents the theoretical                                                                         
+        B power spectrum of the data.This is used to calculate the B covariance                                                                              
+        matrix.                                                                                                                                              
+    max_lam: Give the starting value of lambda                                                                                                              
     eta: Give the value by which lambda is multiplied by each time lambda gets 
         altered.
     min_chi: Give a number which tells the filter when to decrease the value of lambda.
         When lambda times chi_squared goes below min_chi, the filter will lower the value
         of lambda, and then repeat the same process.
-                                                                                                                                                                                                                     
-    Returns                                                                                                                                                                                                      
-                                                                                                                                                                                                               
-    A 1-D vector with size NSPH * 2. The first NSPH entries in this will be the                                                                                                                                    
-    alm's for the E mode. The last NSPH entries in this will be the alm's for the                                                                                                                                  
+                                                                                                                                                             
+    Returns                                                                                                                                          
+                                                                                                                                                              
+    A 1-D vector with size NSPH * 2. The first NSPH entries in this will be the                                                                             
+    alm's for the E mode. The last NSPH entries in this will be the alm's for the                                                                             
     B mode. Also returns a list of chi-squared statistics calculated on each iteration."""
     NPIX = len(i_q_u[0])
     NSIDE = int(np.sqrt(NPIX/12))
@@ -496,8 +511,8 @@ def iterate_untilchi_eta(Ndiag, i_q_u, B_pspec_cov, max_lam, eta, min_chi = 10**
     lam = max_lam
     lambda_list.append(lam)
     while lam >= 1:
-        lam = lam*eta
         lambda_list.append(lam)
+        lam = lam*eta
     for lambdaone in lambda_list:
         tpix = (Ntilde_inv * data + (lambdaone * Tdiag_pix)**(-1) * s) * (Ntilde_inv + (lambdaone * Tdiag_pix)**(-1))**(-1)
         tpix_q = tpix[:NPIX]
@@ -511,7 +526,7 @@ def iterate_untilchi_eta(Ndiag, i_q_u, B_pspec_cov, max_lam, eta, min_chi = 10**
         ssph_b = ssph[NSPH:]
         weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
         s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
-        chi_squared = np.dot(ssph,S_B*ssph) + np.dot((data - s),(Ndiag + (lambdaone - 1)*Tdiag_pix)**(-1)*(data - s))
+        chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
         chi_squared_list.append(chi_squared)
         while lambdaone*chi_squared > min_chi:
             tpix = (Ntilde_inv * data + (lambdaone * Tdiag_pix)**(-1) * s) * (Ntilde_inv + (lambdaone * Tdiag_pix)**(-1))**(-1)
@@ -526,41 +541,37 @@ def iterate_untilchi_eta(Ndiag, i_q_u, B_pspec_cov, max_lam, eta, min_chi = 10**
             ssph_b = ssph[NSPH:]
             weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
             s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
-            chi_squared = np.dot(ssph,S_B*ssph) + np.dot((data - s),(Ndiag + (lambdaone - 1)*Tdiag_pix)**(-1)*(data - s))
+            chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
             chi_squared_list.append(chi_squared)
     s_final = S_B * B_pseudo * ssph
     return s_final, chi_squared_list, lambda_list
 
 
-def iterate_cooling(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize, chi_min):
-    """                                                                                                                                                                                                               
-    Parameters                                                                                                                                                                                                        
-                                                                                                                                                                                                                      
-    Ndiag: Give a 1-D vector that represents the diagonal of the noise covariance                                                                                                                                     
-        matrix. In simulations, this was two copies of the inverse of the mask                                                                                                                                        
-        on top of each other. These served to mask the Q and U maps from the data                                                                                                                                     
-        vector independently. Ndiag should be size NPIX*2                                                                                                                                                             
-    i_q_u: This is a 3 by NPIX size matrix with the first column of the matrix                                                                                                                                        
-        being an I map, the second being a Q map and the third being a U map.                                                                                                                                         
-        This should be measured data.                                                                                                                                                                                 
-    B_pspec_cov: Give a 1-D vector that is size ELLMAX and represents the theoretical                                                                                                                                 
-        B power spectrum of the data.This is used to calculate the B covariance                                                                                                                                       
-        matrix.                                                                                                                                                                                                       
-    min_lam: Give the minimum value of lambda                                                                                                                                                                         
-    max_lam: Give the maximum value of lambda                                                                                                                                                                         
-    stepsize: Give the size of step you want between successive values of lambda.                                                                                                                                     
-        For example, max_lam = 5, min_lam = 1, stepsize = 2 would give lambda values                                                                                                                                  
-        of 1, 3, 5.                                                                                                                                                                                                   
+def iterate_cooling(Ndiag, i_q_u, B_pspec_cov, chi_min = 1.3*10**5):
+    """                                                                                                                                                        
+    Parameters                                                                                                                                                
+                                                                                                                                                              
+    Ndiag: Give a 1-D vector that represents the diagonal of the noise covariance                                                                            
+        matrix. In simulations, this was two copies of the inverse of the mask                                                                               
+        on top of each other. These served to mask the Q and U maps from the data                                                                             
+        vector independently. Ndiag should be size NPIX*2                                                                                                     
+    i_q_u: This is a 3 by NPIX size matrix with the first column of the matrix                                                                               
+        being an I map, the second being a Q map and the third being a U map.                                                                                 
+        This should be measured data.                                                                                                                         
+    B_pspec_cov: Give a 1-D vector that is size ELLMAX and represents the theoretical                                                                         
+        B power spectrum of the data.This is used to calculate the B covariance                                                                               
+        matrix.                                                                                                                                                
     chi_min: Give a value that is the chi squared minimum which represents b in the 
-        Elsner and Wandelt paper. This has to be a guess to start off with.
-                                                                                                                                                                                                                      
-    Returns                                                                                                                                                                                                           
-                                                                                                                                                                                                                      
-    A 1-D vector with size NSPH * 2. The first NSPH entries in this will be the                                                                                                                                       
-    alm's for the E mode. The last NSPH entries in this will be the alm's for the                                                                                                                                     
-    B mode. Also returns a list of chi-squared statistics calculated on each iteration.                                                                                                                               
-    Also returns a list of the difference in successive values of chi squared on each                                                                                                                                 
-    iteration.                                                                                             
+        Elsner and Wandelt paper. This has to be a guess to start off with. Default 
+        value is 10**5.
+                                                                                                                                                              
+    Returns                                                                                                                                                   
+                                                                                                                                                               
+    A 1-D vector with size NSPH * 2. The first NSPH entries in this will be the                                                                               
+    alm's for the E mode. The last NSPH entries in this will be the alm's for the                                                                              
+    B mode. Also returns a list of chi-squared statistics calculated on each iteration.                                                                        
+    Also returns a list of the difference in successive values of chi squared on each                                                                         
+    iteration. Also returns a list of BB power spectra in C_ell on each iteration.                                                                                            
     """
     NPIX = len(i_q_u[0])
     NSIDE = int(np.sqrt(NPIX/12))
@@ -584,10 +595,13 @@ def iterate_cooling(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize, chi_m
     tpix = data
     lambda_list = []
     chi_squared_list = []
-    chi_diff_list = []
-    chi_squared = chi_min
-    chi_squared_list.append(chi_squared)
-    lambdaone = 1 + (data
+    iqu_list = []
+    i = 0
+    iterfun_init = lambda lam: np.abs(chi2(0, Ndiag, Tdiag_pix, data, 0, 0, lam) - chi_min)
+    minfunc1 = minimize(iterfun_init, 1000, method = 'Nelder-Mead').x
+    lambdaone = minfunc1[0]
+    print("lambdaone = ", lambdaone)
+    lambda_list.append(lambdaone)
     tpix = (Ntilde_inv * data + (lambdaone * Tdiag_pix)**(-1) * s) * (Ntilde_inv + (lambdaone * Tdiag_pix)**(-1))**(-1)
     tpix_q = tpix[:NPIX]
     tpix_u = tpix[NPIX:]
@@ -600,10 +614,20 @@ def iterate_cooling(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize, chi_m
     ssph_b = ssph[NSPH:]
     weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
     s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
-    chi_squared = np.dot(ssph,S_B*ssph) + np.dot((data - s),(Ndiag + (lambdaone - 1)*Tdiag_pix)**(-1)*(data - s))
+    chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
     chi_squared_list.append(chi_squared)
+    iqu_list.append(weiner_iqu)
+    i += 1
+    iterfun_final = lambda lam: np.abs(chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lam) - chi_min)
+    minfunc2 = minimize(iterfun_final, lambdaone, method = 'Nelder-Mead').x
+    print("minfunc2 type = ", type(minfunc2))
+    print(minfunc2)
+    lambdaone = minfunc2[0]
+    print(lambdaone)
+    print("lambdaone type = ",type(lambdaone))
     lambda_list.append(lambdaone)
-    while np.abs((chi_squared_list[i-1] - chi_squared_list[i])) > chi_diff:
+    print("chi_squared (should be always close to chi_min) = ", chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone))
+    while lambdaone > 1:
         tpix = (Ntilde_inv * data + (lambdaone * Tdiag_pix)**(-1) * s) * (Ntilde_inv + (lambdaone * Tdiag_pix)**(-1))**(-1)
         tpix_q = tpix[:NPIX]
         tpix_u = tpix[NPIX:]
@@ -615,21 +639,60 @@ def iterate_cooling(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize, chi_m
         ssph_e = ssph[:NSPH]
         ssph_b = ssph[NSPH:]
         weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
+        iqu_list.append(weiner_iqu)
         s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
-        chi_squared = np.dot(ssph,S_B*ssph) + np.dot((data - s),(Ndiag + (lambdaone - 1)*Tdiag_pix)**(-1)*(data - s))
+        chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
         chi_squared_list.append(chi_squared)
-        chi_diff_list.append(chi_squared_list[i-1] - chi_squared_list[i])
+        iterfun_loop = lambda lam: np.abs(chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lam) - chi_min)
+        minfunc2 = minimize(iterfun_loop, lambdaone, method = 'Nelder-Mead').x
+        print("minfunc2 = ", minfunc2)
+        lambdaone = minfunc2[0]
         lambda_list.append(lambdaone)
-        i += 1
+        print("lambdaone = ", lambdaone)
+        print("chi_squared (should be always close to chi_min) = ", chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone))
+        if i == 0:
+            print("i = ", i)
+            continue
+        elif i < 3:
+            i += 1
+            print("i = ", i)
+            continue
+        elif lambdaone > 2.1:
+            print("lambdaone = ", lambdaone)
+            i += 1
+            continue
+        else:
+            min_chi_lam2p1 = 1*10**5
+            chi_min = min_chi_lam2p1 + np.sum((lambdaone - 1) * min(Ndiag) * ssph * B_pseudo**2 * ssph)
+            print("new chi_min = ", chi_min)
+            i = 0
+            continue
+    lambdaone = 1
+    tpix = (Ntilde_inv * data + (lambdaone * Tdiag_pix)**(-1) * s) * (Ntilde_inv + (lambdaone * Tdiag_pix)**(-1))**(-1)
+    tpix_q = tpix[:NPIX]
+    tpix_u = tpix[NPIX:]
+    t_e_b = hp.map2alm((i_q_u[0], tpix_q, tpix_u), lmax=ELLMAX, pol=True)
+    tsph_e = t_e_b[1]
+    tsph_b = t_e_b[2]
+    tsph = np.concatenate((tsph_e, tsph_b), axis = 0)
+    ssph = (B_pseudo + (lambdaone * Tdiag_sph)**(-1))**(-1) * (lambdaone * Tdiag_sph)**(-1) * tsph
+    ssph_e = ssph[:NSPH]
+    ssph_b = ssph[NSPH:]
+    weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
+    s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
+    chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
+    chi_squared_list.append(chi_squared)
+    iqu_list.append(weiner_iqu)
     s_final = S_B * B_pseudo * ssph
-    return s_final, chi_squared_list, lambda_list, chi_diff_list
+    return s_final, chi_squared_list, lambda_list, iqu_list
 
-
-
+def chi2(S_inv, Ndiag, Tdiag_pix, data, x_pix, x_sph, lam):
+    return np.sum(np.conj(x_sph) * S_inv * x_sph) + np.sum(np.conj((data - x_pix)) * (Ndiag + (lam - 1) * Tdiag_pix)**(-1) * (data - x_pix))
 
 def iterate(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100, eta = 7/10):
     """                                  
     Parameters                                                            
+
     Ndiag: Give a 1-D vector that represents the diagonal of the noise covariance
         matrix. In simulations, this was two copies of the inverse of the mask
         on top of each other. These served to mask the Q and U maps from the data
@@ -645,6 +708,7 @@ def iterate(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100, eta = 7/10):
     eta: Give the factor that lambda is reduce by on each iteration. The default
         value is 7/10                                                                                                                                 
     Returns
+
     A 1-D vector with size NSPH * 2. The first NSPH entries in this will be the
     alm's for the E mode. The last NSPH entries in this will be the alm's for the
     B mode."""
