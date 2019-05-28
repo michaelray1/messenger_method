@@ -9,8 +9,14 @@ os.chdir('/users/PES0740/ucn3066/messenger/CMBS4/Noise')
 Ncovmat = np.load('CMBS4 Ndiag.npz')['arr_0']
 Ndiag = np.concatenate((Ncovmat[1,:],Ncovmat[2,:]),axis=0)
 
-os.chdir('/users/PES0740/ucn3066/CMBS4_maps')
-i_q_u1 = hp.read_map('/users/PES0740/ucn3066/CMBS4_maps/cmbs4_04p00_comb_f095_b24_ellmin30_map_0512_mc_0000.fits',field=(0,1,2))
+fwhm = 24.2
+sigma_rad = (fwhm/(np.sqrt(8*np.log(2))))*(np.pi/(60*180))
+
+os.chdir('/fs/project/PES0740/sky_yy/cmb/scalar')
+talm = hp.read_alm('ffp10_unlensed_scl_cmb_000_tebplm_mc_0010.fits',hdu=1)
+ealm = hp.read_alm('ffp10_unlensed_scl_cmb_000_tebplm_mc_0010.fits',hdu=2)
+balm = hp.read_alm('ffp10_unlensed_scl_cmb_000_tebplm_mc_0010.fits',hdu=3)
+i_q_u1 = hp.alm2map((talm,ealm,balm),nside=512,pol=True,sigma = sigma_rad)
 i_q_u1[np.isnan(i_q_u1)] = 0
 i_q_u = i_q_u1*10**6
 
