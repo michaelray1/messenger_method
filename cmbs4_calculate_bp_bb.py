@@ -27,23 +27,19 @@ Ncovmat = np.load('/users/PES0740/ucn3066/messenger/CMBS4/Noise/CMBS4 Ndiag.npz'
 Ndiag = np.concatenate((Ncovmat[1,:],Ncovmat[2,:]),axis=0)
 
 os.chdir('/users/PES0740/ucn3066/messenger/CMBS4/bpwf/BB2BB')
-tot_binned_bbdl = np.empty([370, 10])
-list_of_output_bspec = np.empty([370,ELLMAX+1])
-list_of_converted_dl_bspec = np.empty([370,ELLMAX+1])
-for input_ell in range(370):
-    print(input_ell)
+tot_binned_bbdl = np.empty([6, 10])
+i = 0
+while i <= 5:
     input_pspec = np.zeros(ELLMAX)
-    input_pspec[input_ell] = 1.0*B_ell_squared[input_ell]*2*np.pi/(input_ell*(input_ell+1))
+    input_pspec[INDEX] = 1.0*B_ell_squared[INDEX]*2*np.pi/(INDEX*(INDEX+1))
     i_q_u = hp.synfast((np.zeros(ELLMAX),np.zeros(ELLMAX),input_pspec,np.zeros(ELLMAX)), NSIDE, pol=True, new=True)
-    output_almsbb = msg.iterate_withbeam(Ndiag, i_q_u, c_ells_t[3,:1535], eta=8.25/10)[NSPH:]
+    output_alms, bspecs, lam_list = msg.iterate_withbeam(Ndiag, i_q_u, c_ells_t[3,:1536], eta=8.25/10)
+    output_almsbb = output_alms[NSPH:]
     output_bspec = hp.alm2cl(output_almsbb, lmax = ELLMAX)
-    output_bbdl = np.array([output_bspec[i]*(i*(i+1))/(2*np.pi) for i in range(len(output_bspec))])
+    output_bbdl = np.array([output_bspec[j]*(j*(j+1))/(2*np.pi) for j in range(len(output_bspec))])
     binned_bspec_dl = msg.bin_pspec(output_bbdl, 20, 370, 35)
-    tot_binned_bbdl[input_ell,:] = binned_bspec_dl
-    list_of_output_bspec[input_ell,:] = output_bspec
-    list_of_converted_dl_bspec[input_ell,:] = output_bbdl
+    tot_binned_bbdl[i,:] = binned_bspec_dl
+    i += 1
 
 
-np.savez('take2_binned_bb2bb_bpwf_24iter_sim{}.npz'.format(INDEX), tot_binned_bbdl)
-np.savez('take2_list of output bspec{}.npz'.format(INDEX),list_of_output_bspec)
-np.savez('take2_list of converted dl bspec{}.npz'.format(INDEX),list_of_converted_dl_bspec)
+np.savez('binned_bpwf_bb2bb_inputell{}.npz'.format(INDEX), tot_binned_bbdl)

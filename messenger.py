@@ -49,6 +49,85 @@ def signal_diag(inputTT, NSIDE = 512):
     Sdiag[np.where(alm2 > 10e-6)] = 1.0
     return Sdiag
 
+def iterate_pcg(Ndiag, i_q_u, B_pspec_cov):
+    """
+    Parameters
+    
+    Ndiag: Give a vector that is size NPIX*2 which is the noise covariance matrix
+        in pixel space. This is usually two copies of the inverse mask on top of
+        each other
+    i_q_u: Give a 3 by NPIX array which represents measured data. 
+    B_pspec_cov: Give a vector of length ELLMAX which will be used to create
+        the signal covariance matrix.
+
+    Returns
+    A filtered map that is filtered using the preconditioned conjugate gradient
+    technique. I have used the method and equations outlined in the Papez, 
+    Grigori, Stompor paper and algorithm 10.2.1 from Golub/Van Loan 1996.
+    This also returns a list of r_k, x_k, and p_k.
+    """
+    NPIX = len(i_q_u[0])
+    NSIDE = int(np.sqrt(NPIX/12))
+    ELLMAX = 3*NSIDE - 1
+    ells = np.arange(0, ELLMAX + 1)
+    data = np.concatenate((i_q_u[1],i_q_u[2]), axis=0)
+    NSPH = int(np.sum(1.0 * np.arange(ELLMAX+1) + 1.0))
+    Tdiag_pix = np.min(Ndiag)*np.ones(NPIX*2)
+    Tdiag_sph = np.min(Ndiag)*np.ones(NSPH * 2) * (4.0 * np.pi) / NPIX
+    Ntilde_inv = (Ndiag - 0.999*Tdiag_pix)**(-1)
+    FWHM = 24.2
+    sigma_rad = (FWHM/(np.sqrt(8*np.log(2))))*(np.pi/(60*180))
+    B_ell_squared = [np.e**((-1)*(index**2)*(sigma_rad**2)) for index in range(ELLMAX)]
+    B_pspec_cov[:30]=1e-10
+    B_pspec_cov_beamed = B_pspec_cov*B_ell_squared
+    B_cov = hp.almxfl(np.ones(NSPH), B_pspec_cov_beamed)
+    S_B = np.concatenate((np.zeros(NSPH), B_cov), axis = 0)
+    B_pseudo = np.concatenate((np.zeros(NSPH), (B_cov)**(-1)), axis = 0)
+    B_pseudo[np.where(np.isnan(B_pseudo))] = 0.0
+    C_mat = B_pseudo + Tdiag_sph**(-1)
+    Ndiag_sph = hp.map2alm(Ndiag[:NPIX], lmax = ELLMAX)
+    D_mat = Tdiag_pix**(-1) * (Ntilde_inv + Tdiag_pix**(-1))**(-1) * Tdiag_pix**(-1)
+    D_mat_q = D_mat[:NPIX]
+    D_mat_u = D_mat[NPIX:]
+    D_mat_sph = np.concatenate((hp.map2alm(D_mat_q, lmax=ELLMAX), hp.map2alm(D_mat_u, lmax=ELLMAX)), axis=0)
+    A_mat = np.ones(NPIX*2) - np.concatenate((hp.alm2map(C_mat[:NSPH]**(-1) * D_mat_sph[:NSPH], NSIDE), hp.alm2map(C_mat[NSPH:]**(-1) * D_mat_sph[NSPH:], NSIDE)), axis=0)
+    b_vec = np.concatenate((hp.alm2map(C_mat[:NSPH] * Ndiag_sph, NSIDE), hp.alm2map(C_mat[NSPH:] * Ndiag_sph, NSIDE)), axis=0) * data
+    k = 0
+    list_rk = np.empty([2, NPIX*2])
+    list_xk = np.empty([2, NPIX*2])
+    list_pk = np.empty([2, NPIX*2])
+    x_k = np.zeros(NPIX*2)
+    r_k = b_vec - A_mat * x_k
+    list_xk[1,:] = x_k
+    list_rk[1,:] = r_k
+    while np.any(np.abs(r_k) >= 1e-5):
+        print('k = ', k)
+        k += 1
+        if k == 1:
+            p_k = r_k
+            list_pk[1, :] = p_k
+        else:
+            beta_k = np.sum(list_rk[1,:] * list_rk[1,:] / (list_rk[0,:] * list_rk[0,:]))
+            p_k = list_rk[1,:] + beta_k * list_pk[1,:]
+            print("beta_k = ", beta_k)
+            print('p_k = ', p_k)
+            print('list_rk[1,:] after pk = ', list_rk[1,:])
+            print('list_pk[1,:] after pk before update = ', list_pk[1,:])
+            list_pk[0,:] = list_pk[1,:]
+            list_pk[1,:] = p_k
+        alpha_k = np.sum(list_rk[1,:] * list_rk[1,:] / (p_k * A_mat * p_k))
+        print('alpha_k = ', alpha_k)
+        x_k = list_xk[1,:] + alpha_k * p_k
+        print("x_k = ", x_k)
+        r_k = list_rk[1,:] - alpha_k * A_mat * p_k
+        print("r_k = ", r_k)
+        list_xk[0,:] = list_xk[1,:]
+        list_xk[1,:] = x_k
+        list_rk[0,:] = list_rk[1,:]
+        list_rk[1,:] = r_k
+    final_sig = x_k
+    return final_sig, list_rk, list_xk, list_pk
+
 def iterate_withbeam(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100, eta = 7/10):
     """
     Parameters
@@ -79,6 +158,7 @@ def iterate_withbeam(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100, eta = 7/10):
     NPIX = len(i_q_u[0])
     NSIDE = int(np.sqrt(NPIX/12))
     ELLMAX = 3*NSIDE - 1
+    ells = np.arange(ELLMAX + 1)
     data = np.concatenate((i_q_u[1],i_q_u[2]), axis=0)
     NSPH = int(np.sum(1.0 * np.arange(ELLMAX+1) + 1.0))
     Tdiag_pix = np.min(Ndiag)*np.ones(NPIX*2)
@@ -86,18 +166,39 @@ def iterate_withbeam(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100, eta = 7/10):
     Ntilde_inv = (Ndiag - 0.999*Tdiag_pix)**(-1)
     FWHM = 24.2
     sigma_rad = (FWHM/(np.sqrt(8*np.log(2))))*(np.pi/(60*180))
-    B_ell_squared = [np.e**((-1)*(index**2)*(sigma_rad**2)) for index in range(ELLMAX)]
+    B_ell_squared = np.e**((-1)*(ells**2)*(sigma_rad**2))
     B_pspec_cov[:30]=1e-10
     B_pspec_cov_beamed = B_pspec_cov*B_ell_squared
     B_cov = hp.almxfl(np.ones(NSPH), B_pspec_cov_beamed)
+    #B_cov = hp.almxfl(np.ones(NSPH), B_ell_squared)
     S_B = np.concatenate((np.zeros(NSPH), B_cov), axis = 0)
+    #S_B = np.concatenate((np.zeros(NSPH), B_cov), axis=0)
     B_pseudo = np.concatenate((np.zeros(NSPH), (B_cov)**(-1)), axis = 0)
     B_pseudo[np.where(np.isnan(B_pseudo))] = 0.0
     s = np.zeros(NPIX*2)
     tpix = data
-    iqu_list = []
-    chi_squared_list = []
+    bspec_list = []
     lambda_list = []
+    i = 0
+    lambdaone = 1300
+    tpix = (Ntilde_inv * data + (lambdaone * Tdiag_pix)**(-1) * s) * (Ntilde_inv + (lambdaone * Tdiag_pix)**(-1))**(-1)
+    tpix_q = tpix[:NPIX]
+    tpix_u = tpix[NPIX:]
+    t_e_b = hp.map2alm((i_q_u[0], tpix_q, tpix_u), lmax=ELLMAX, pol=True)
+    tsph_e = t_e_b[1]
+    tsph_b = t_e_b[2]
+    tsph = np.concatenate((tsph_e, tsph_b), axis = 0)
+    ssph = (B_pseudo + (lambdaone * Tdiag_sph)**(-1))**(-1) * (lambdaone * Tdiag_sph)**(-1) * tsph
+    ssph_e = ssph[:NSPH]
+    ssph_b = ssph[NSPH:]
+    weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
+    out_bspec_cl = hp.anafast(weiner_iqu, lmax = ELLMAX, pol=True)[2]
+    s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
+    bspec_list.append(out_bspec_cl * ells * (ells+1) / (2 * np.pi))
+    lambda_list.append(lambdaone)
+    print("lambdaone = ", lambdaone)
+    i += 1
+    lambdaone = 100
     while lambdaone >= 1:
         tpix = (Ntilde_inv * data + (lambdaone * Tdiag_pix)**(-1) * s) * (Ntilde_inv + (lambdaone * Tdiag_pix)**(-1))**(-1)
         tpix_q = tpix[:NPIX]
@@ -110,14 +211,15 @@ def iterate_withbeam(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100, eta = 7/10):
         ssph_e = ssph[:NSPH]
         ssph_b = ssph[NSPH:]
         weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
+        out_bspec_cl = hp.anafast(weiner_iqu, lmax = ELLMAX, pol = True)[2]
         s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
-        chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
-        chi_squared_list.append(chi_squared)
-        iqu_list.append(weiner_iqu)
+        bspec_list.append(out_bspec_cl * ells * (ells+1) / (2 * np.pi))
         lambdaone = lambdaone*eta
+        print("lambdaone = ", lambdaone)
         lambda_list.append(lambdaone)
-    i = 0
+        i += 1
     lambdaone = 1
+    i = 0
     while i < 5:
         tpix = (Ntilde_inv * data + (lambdaone * Tdiag_pix)**(-1) * s) * (Ntilde_inv + (lambdaone * Tdiag_pix)**(-1))**(-1)
         tpix_q = tpix[:NPIX]
@@ -131,13 +233,13 @@ def iterate_withbeam(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100, eta = 7/10):
         ssph_b = ssph[NSPH:]
         weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
         s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
-        chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
-        chi_squared_list.append(chi_squared)
-        iqu_list.append(weiner_iqu)
+        out_bspec_cl = hp.anafast(weiner_iqu, lmax = ELLMAX, pol=True)[2]
+        bspec_list.append(out_bspec_cl * ells * (ells+1) / (2 * np.pi))
         lambda_list.append(lambdaone)
         i += 1
-    s_final = S_B * B_pseudo * ssph
-    return s_final, iqu_list, chi_squared_list, lambda_list
+        print("i = ", i)
+    s_final = ssph
+    return s_final, bspec_list, lambda_list
 
 def iterate_fixedlam(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100, NSIMS = 10):
     """                                                                                        Parameters                                                                                 Ndiag: Give a 1-D vector that represents the diagonal of the noise covariance
@@ -321,6 +423,7 @@ def iterate_untilchi_steps(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize
     tpix = data
     lambda_list = []
     chi_squared_list = []
+    iqu_list = []
     chi_squared = min_chi*2
     for lambdaone in np.flip(np.arange(min_lam, max_lam, stepsize)):
         tpix = (Ntilde_inv * data + (lambdaone * Tdiag_pix)**(-1) * s) * (Ntilde_inv + (lambdaone * Tdiag_pix)**(-1))**(-1)
@@ -337,6 +440,7 @@ def iterate_untilchi_steps(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize
         s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
         chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
         chi_squared_list.append(chi_squared)
+        iqu_list.append(weiner_iqu)
         lambda_list.append(lambdaone)
         while lambdaone*chi_squared > min_chi:
             tpix = (Ntilde_inv * data + (lambdaone * Tdiag_pix)**(-1) * s) * (Ntilde_inv + (lambdaone * Tdiag_pix)**(-1))**(-1)
@@ -353,9 +457,30 @@ def iterate_untilchi_steps(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize
             s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
             chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
             chi_squared_list.append(chi_squared)
+            iqu_list.append(weiner_iqu)
             lambda_list.append(lambdaone)
+    i = 0
+    lambdaone = 1
+    while i < 5:
+        tpix = (Ntilde_inv * data + (lambdaone * Tdiag_pix)**(-1) * s) * (Ntilde_inv + (lambdaone * Tdiag_pix)**(-1))**(-1)
+        tpix_q = tpix[:NPIX]
+        tpix_u = tpix[NPIX:]
+        t_e_b = hp.map2alm((i_q_u[0], tpix_q, tpix_u), lmax=ELLMAX, pol=True)
+        tsph_e = t_e_b[1]
+        tsph_b = t_e_b[2]
+        tsph = np.concatenate((tsph_e, tsph_b), axis = 0)
+        ssph = (B_pseudo + (lambdaone * Tdiag_sph)**(-1))**(-1) * (lambdaone * Tdiag_sph)**(-1) * tsph
+        ssph_e = ssph[:NSPH]
+        ssph_b = ssph[NSPH:]
+        weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
+        s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
+        chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
+        chi_squared_list.append(chi_squared)
+        iqu_list.append(weiner_iqu)
+        lambda_list.append(lambdaone)
+        i += 1
     s_final = S_B * B_pseudo * ssph
-    return s_final, chi_squared_list, lambda_list
+    return s_final, chi_squared_list, lambda_list, iqu_list
 
 
 def iterate_chidiff_steps(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize, init_chi = 2*10**7, chi_diff = 3500):
@@ -415,7 +540,7 @@ def iterate_chidiff_steps(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize,
     tpix = data
     lambda_list = []
     chi_squared_list = []
-    chi_diff_list = []
+    iqu_list = []
     chi_squared = init_chi*2
     chi_squared_list.append(chi_squared)
     i = 0
@@ -432,6 +557,7 @@ def iterate_chidiff_steps(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize,
         ssph_b = ssph[NSPH:]
         weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
         s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
+        iqu_list.append(weiner_iqu)
         chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
         chi_squared_list.append(chi_squared)
         lambda_list.append(lambdaone)
@@ -451,11 +577,11 @@ def iterate_chidiff_steps(Ndiag, i_q_u, B_pspec_cov, min_lam, max_lam, stepsize,
             s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
             chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
             chi_squared_list.append(chi_squared)
-            chi_diff_list.append(chi_squared_list[i-1] - chi_squared_list[i])
+            iqu_list.append(weiner_iqu)
             lambda_list.append(lambdaone)
             i += 1
     s_final = S_B * B_pseudo * ssph
-    return s_final, chi_squared_list, lambda_list, chi_diff_list
+    return s_final, chi_squared_list, lambda_list, iqu_list
 
 
 
@@ -507,6 +633,7 @@ def iterate_untilchi_eta(Ndiag, i_q_u, B_pspec_cov, max_lam, eta, min_chi = 10**
     tpix = data
     lambda_list = []
     chi_squared_list = []
+    iqu_list = []
     chi_squared = min_chi*2
     lam = max_lam
     lambda_list.append(lam)
@@ -528,6 +655,7 @@ def iterate_untilchi_eta(Ndiag, i_q_u, B_pspec_cov, max_lam, eta, min_chi = 10**
         s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
         chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
         chi_squared_list.append(chi_squared)
+        iqu_list.append(weiner_iqu)
         while lambdaone*chi_squared > min_chi:
             tpix = (Ntilde_inv * data + (lambdaone * Tdiag_pix)**(-1) * s) * (Ntilde_inv + (lambdaone * Tdiag_pix)**(-1))**(-1)
             tpix_q = tpix[:NPIX]
@@ -543,8 +671,29 @@ def iterate_untilchi_eta(Ndiag, i_q_u, B_pspec_cov, max_lam, eta, min_chi = 10**
             s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
             chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
             chi_squared_list.append(chi_squared)
+            iqu_list.append(weiner_iqu)
+    i = 0
+    lambdaone = 1
+    while i < 10:
+        tpix = (Ntilde_inv * data + (lambdaone * Tdiag_pix)**(-1) * s) * (Ntilde_inv + (lambdaone * Tdiag_pix)**(-1))**(-1)
+        tpix_q = tpix[:NPIX]
+        tpix_u = tpix[NPIX:]
+        t_e_b = hp.map2alm((i_q_u[0], tpix_q, tpix_u), lmax=ELLMAX, pol=True)
+        tsph_e = t_e_b[1]
+        tsph_b = t_e_b[2]
+        tsph = np.concatenate((tsph_e, tsph_b), axis = 0)
+        ssph = (B_pseudo + (lambdaone * Tdiag_sph)**(-1))**(-1) * (lambdaone * Tdiag_sph)**(-1) * tsph
+        ssph_e = ssph[:NSPH]
+        ssph_b = ssph[NSPH:]
+        weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
+        s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
+        chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
+        chi_squared_list.append(chi_squared)
+        iqu_list.append(weiner_iqu)
+        lambda_list.append(lambdaone)
+        i += 1
     s_final = S_B * B_pseudo * ssph
-    return s_final, chi_squared_list, lambda_list
+    return s_final, chi_squared_list, lambda_list, iqu_list
 
 
 def iterate_cooling(Ndiag, i_q_u, B_pspec_cov, chi_min = 1.3*10**5):
@@ -576,6 +725,7 @@ def iterate_cooling(Ndiag, i_q_u, B_pspec_cov, chi_min = 1.3*10**5):
     NPIX = len(i_q_u[0])
     NSIDE = int(np.sqrt(NPIX/12))
     ELLMAX = 3*NSIDE - 1
+    ells = np.arange(0,ELLMAX + 1)
     data = np.concatenate((i_q_u[1],i_q_u[2]), axis=0)
     NSPH = int(np.sum(1.0 * np.arange(ELLMAX+1) + 1.0))
     Tdiag_pix = np.min(Ndiag)*np.ones(NPIX*2)
@@ -595,9 +745,9 @@ def iterate_cooling(Ndiag, i_q_u, B_pspec_cov, chi_min = 1.3*10**5):
     tpix = data
     lambda_list = []
     chi_squared_list = []
-    iqu_list = []
+    bspec_list = []
     i = 0
-    iterfun_init = lambda lam: np.abs(chi2(0, Ndiag, Tdiag_pix, data, 0, 0, lam) - chi_min)
+    iterfun_init = lambda lam: np.abs(chi2ofzero(Ndiag, Tdiag_pix, data, 0, lam) - chi_min)
     minfunc1 = minimize(iterfun_init, 1000, method = 'Nelder-Mead').x
     lambdaone = minfunc1[0]
     print("lambdaone = ", lambdaone)
@@ -613,18 +763,16 @@ def iterate_cooling(Ndiag, i_q_u, B_pspec_cov, chi_min = 1.3*10**5):
     ssph_e = ssph[:NSPH]
     ssph_b = ssph[NSPH:]
     weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
+    out_bspec_cl = hp.alm2cl(ssph_b, lmax = ELLMAX)
     s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
     chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
     chi_squared_list.append(chi_squared)
-    iqu_list.append(weiner_iqu)
+    bspec_list.append(out_bspec_cl * ells * (ells+1) / (2 * np.pi))
     i += 1
     iterfun_final = lambda lam: np.abs(chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lam) - chi_min)
     minfunc2 = minimize(iterfun_final, lambdaone, method = 'Nelder-Mead').x
-    print("minfunc2 type = ", type(minfunc2))
-    print(minfunc2)
     lambdaone = minfunc2[0]
-    print(lambdaone)
-    print("lambdaone type = ",type(lambdaone))
+    print("lambdaone = ", lambdaone)
     lambda_list.append(lambdaone)
     print("chi_squared (should be always close to chi_min) = ", chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone))
     while lambdaone > 1:
@@ -639,55 +787,62 @@ def iterate_cooling(Ndiag, i_q_u, B_pspec_cov, chi_min = 1.3*10**5):
         ssph_e = ssph[:NSPH]
         ssph_b = ssph[NSPH:]
         weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
-        iqu_list.append(weiner_iqu)
+        out_bspec_cl = hp.alm2cl(ssph_b, lmax = ELLMAX)
         s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
         chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
+        bspec_list.append(out_bspec_cl * ells * (ells+1) / (2 * np.pi))
         chi_squared_list.append(chi_squared)
         iterfun_loop = lambda lam: np.abs(chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lam) - chi_min)
         minfunc2 = minimize(iterfun_loop, lambdaone, method = 'Nelder-Mead').x
-        print("minfunc2 = ", minfunc2)
         lambdaone = minfunc2[0]
         lambda_list.append(lambdaone)
-        print("lambdaone = ", lambdaone)
+        print("lambdaone (in loop) = ", lambdaone)
         print("chi_squared (should be always close to chi_min) = ", chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone))
         if i == 0:
             print("i = ", i)
-            continue
         elif i < 3:
             i += 1
             print("i = ", i)
-            continue
         elif lambdaone > 2.1:
-            print("lambdaone = ", lambdaone)
             i += 1
-            continue
         else:
             min_chi_lam2p1 = 1*10**5
             chi_min = min_chi_lam2p1 + np.sum((lambdaone - 1) * min(Ndiag) * ssph * B_pseudo**2 * ssph)
             print("new chi_min = ", chi_min)
             i = 0
-            continue
-    lambdaone = 1
-    tpix = (Ntilde_inv * data + (lambdaone * Tdiag_pix)**(-1) * s) * (Ntilde_inv + (lambdaone * Tdiag_pix)**(-1))**(-1)
-    tpix_q = tpix[:NPIX]
-    tpix_u = tpix[NPIX:]
-    t_e_b = hp.map2alm((i_q_u[0], tpix_q, tpix_u), lmax=ELLMAX, pol=True)
-    tsph_e = t_e_b[1]
-    tsph_b = t_e_b[2]
-    tsph = np.concatenate((tsph_e, tsph_b), axis = 0)
-    ssph = (B_pseudo + (lambdaone * Tdiag_sph)**(-1))**(-1) * (lambdaone * Tdiag_sph)**(-1) * tsph
-    ssph_e = ssph[:NSPH]
-    ssph_b = ssph[NSPH:]
-    weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
-    s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
-    chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
-    chi_squared_list.append(chi_squared)
-    iqu_list.append(weiner_iqu)
+    i = 1
+    delt_chi_squared = 100
+    while delt_chi_squared > 10:
+        print("delt_chi_squared = ", delt_chi_squared)
+        lambdaone = 1
+        tpix = (Ntilde_inv * data + (lambdaone * Tdiag_pix)**(-1) * s) * (Ntilde_inv + (lambdaone * Tdiag_pix)**(-1))**(-1)
+        tpix_q = tpix[:NPIX]
+        tpix_u = tpix[NPIX:]
+        t_e_b = hp.map2alm((i_q_u[0], tpix_q, tpix_u), lmax=ELLMAX, pol=True)
+        tsph_e = t_e_b[1]
+        tsph_b = t_e_b[2]
+        tsph = np.concatenate((tsph_e, tsph_b), axis = 0)
+        ssph = (B_pseudo + (lambdaone * Tdiag_sph)**(-1))**(-1) * (lambdaone * Tdiag_sph)**(-1) * tsph
+        ssph_e = ssph[:NSPH]
+        ssph_b = ssph[NSPH:]
+        weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), NSIDE, lmax=ELLMAX, pol=True)
+        out_bspec_cl = hp.alm2cl(ssph_b, lmax = ELLMAX)
+        s = np.concatenate((weiner_iqu[1], weiner_iqu[2]), axis = 0)
+        chi_squared = chi2(B_pseudo, Ndiag, Tdiag_pix, data, s, ssph, lambdaone)
+        chi_squared_list.append(chi_squared)
+        bspec_list.append(out_bspec_cl * ells * (ells+1) / (2 * np.pi))
+        delt_chi_squared = np.abs(chi_squared_list[i] - chi_squared_list[i-1])
+        print("lambdaone = ", lambdaone)
+        print("i = ", i)
+        i += 1
     s_final = S_B * B_pseudo * ssph
-    return s_final, chi_squared_list, lambda_list, iqu_list
+    return s_final, chi_squared_list, lambda_list, bspec_list
 
 def chi2(S_inv, Ndiag, Tdiag_pix, data, x_pix, x_sph, lam):
     return np.sum(np.conj(x_sph) * S_inv * x_sph) + np.sum(np.conj((data - x_pix)) * (Ndiag + (lam - 1) * Tdiag_pix)**(-1) * (data - x_pix))
+
+def chi2ofzero(Ndiag, Tdiag_pix, data, x_pix, lam):
+    return np.sum(np.conj((data - x_pix)) * (Ndiag + (lam - 1) * Tdiag_pix)**(-1) * (data - x_pix))
 
 def iterate(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100, eta = 7/10):
     """                                  
