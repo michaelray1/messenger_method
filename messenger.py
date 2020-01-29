@@ -170,9 +170,7 @@ def iterate_withbeam(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100, eta = 7/10):
     B_pspec_cov[:30]=1e-10
     B_pspec_cov_beamed = B_pspec_cov*B_ell_squared
     B_cov = hp.almxfl(np.ones(NSPH), B_pspec_cov_beamed)
-    #B_cov = hp.almxfl(np.ones(NSPH), B_ell_squared)
     S_B = np.concatenate((np.zeros(NSPH), B_cov), axis = 0)
-    #S_B = np.concatenate((np.zeros(NSPH), B_cov), axis=0)
     B_pseudo = np.concatenate((np.zeros(NSPH), (B_cov)**(-1)), axis = 0)
     B_pseudo[np.where(np.isnan(B_pseudo))] = 0.0
     s = np.zeros(NPIX*2)
@@ -238,7 +236,7 @@ def iterate_withbeam(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100, eta = 7/10):
         lambda_list.append(lambdaone)
         i += 1
         print("i = ", i)
-    s_final = ssph
+    s_final = S_B * B_pseudo * ssph
     return s_final, bspec_list, lambda_list
 
 def iterate_fixedlam(Ndiag, i_q_u, B_pspec_cov, lambdaone = 100, NSIMS = 10):
