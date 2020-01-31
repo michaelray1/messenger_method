@@ -3,7 +3,7 @@
 import numpy as np
 import healpy as hp
 
-class mmwf(N, S, T, cooling):
+class mmwf:
     """wiener filter by messenger method object. 
 
     Parameters:
@@ -13,24 +13,48 @@ class mmwf(N, S, T, cooling):
     cooling - Cooling schedule object
     """
 
-    def __init__(self):
-        mmwf.N = N
-        mmwf.S = S
-        mmwf.T = T
-        mmwf.cooling = cooling
+    def __init__(self, Nbar, S, T, data, cooling):
+        self.Nbar = Nbar
+        self.S = S
+        self.T = T
+        self.data = data
+        self.cooling = cooling
 
-    def iteration(self, N, S, T, t, lam):
+    def mat_inverse(self, matrix):
+        """Computes the inverse of the given matrix"""
+        inv = np.linalg.inverse(matrix)
+        return inv
+
+    def do_iteration(self, t, lam, s):
+        tpix = ((self.Nbar.inverse().times(self.data)) + (self.T.lam_inverse(lam).times(s))) * mat_inverse((self.Nbar.inverse() + (self.T.lam_inverse(lam))))
+
+    def filter_map(self):
+        for lam in self.cooling:
+            self.do_iteration(self.Nbar, self.S, self.T, self.t, self.data, lam)
 
 
-class N():
+class N:
     """Noise covariance object.
 
     Parameters
     cov_mat - Noise covariance matrix as a numpy array. It will be size NPIX by NPIX, or size NPIX by one if it is diagonal.
     """
 
-    def __init__(self, cov_mat):
-        N.cov_mat = cov_mat
+    def __init__(self, Npix):
+        self.Npix = Npix
+        self.Nside = np.sqrt(Npix/12)
+        self.ellmax = 3*self.Nside**2
+        ells = np.arange(self.ellmax)                                                                                                                       
+        self.Nsph = np.sum(ells+1)                                                                                                             
+        self.cov_mat = np.ones((Npix*2, Npix*2), dtype = np.float64)
+
+    def make_matrix(self, matrix):
+        """Sets N.cov_mat to be whatever is given as matrix in the input
+
+        Parameters
+        matrix - Give the noise covariance matrix you want to use. Size of matrix should be Npix*2 by Npix*2
+        """
+        self.cov_mat = matrix
 
     def inverse(self):
         """Returns the inverse of the noise covariance matrix
@@ -40,11 +64,59 @@ class N():
 
     def times(self, x):
         """Returns the matrix product of the noise covariance matrix with the given matrix x"""
-        
-        
+        return np.matmul(self.cov_mat, x)
 
 
-class S():
+class T:
+    """Messenger field covariance object.
+
+    Parameters
+    N - Noise covariance object
+    """
+    def __init__(self, N):
+        self.Npix = N.Npix
+        self.Nsph = N.Nsph                                                                                                                       
+        self.cov_mat_pix = min(N.cov_mat.diagonal()) * np.identity(N.Npix*2)
+        self.cov_mat_sph = min(N.cov_mat.diagonal()) * np.identity(N.Nsph*2) * (4.0*np.pi) / N.Npix
+
+    def times_lam(self, lam):
+        """Multiplies T matrix by scalar value lambda"""
+        product = lam * self.cov_mat_pix
+        return product
+
+    def lam_inverse(self, lam):
+        """Returns the inverse of T times lambda"""
+        inv = np.linalg.inv(times_lam(lam))
+        return inv
+
+    def times(self, x):
+        """Returns the matrix product of the messenger covariance matrix with the given matrix x"""
+        return np.matmul(self.cov_mat_pix, x)
+
+
+
+class Nbar:
+    """Nbar object.
+    
+    Parameters
+    N - Noise covariance object
+    T - Messenger field covariance object
+    """
+
+    def __init__(self, N, T):
+        self.cov_mat = N.cov_mat - T.cov_mat
+
+
+    def inverse(self):
+        inv = np.linalg.inv(self.cov_mat)
+        return inv
+
+    def times(self, x):
+        """Returns the matrix product of the Nbar covariance matrix with the given matrix x"""
+        return np.matmul(self.cov_mat, x)
+
+
+class S:
     """Signal covariance object.
 
     Parameters
@@ -52,9 +124,9 @@ class S():
     """
 
     def __init__(self, cov_mat):
-        S.cov_mat = cov_mat
+        self.cov_mat = cov_mat
 
-class cooling():
+class cooling:
     """Cooling object. This is how you construct a cooling schedule for lambda in the iterating process.
     """
 
