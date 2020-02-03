@@ -1,5 +1,9 @@
 """Module containing messenger method code that has been packaged in a more convenient manner"""
 
+"""Questions: When, in the original messenger.py code, did we ever put in the E mode part of signal covariance?
+
+How do I make the code fully general for it to work with signal covariance matrices that have an inverse, and signal covariance matrices that need a pseudo inverse?"""
+
 import numpy as np
 import healpy as hp
 
@@ -27,6 +31,15 @@ class mmwf:
 
     def do_iteration(self, t, lam, s):
         tpix = ((self.Nbar.inverse().times(self.data)) + (self.T.lam_inverse(lam).times(s))) * mat_inverse((self.Nbar.inverse() + (self.T.lam_inverse(lam))))
+        
+        tpix_q = tpix[:NPIX]
+        tpix_u = tpix[NPIX:]
+        t_e_b = hp.map2alm((i_q_u[0], tpix_q, tpix_u), lmax=ELLMAX, pol=True)
+        tsph_e = t_e_b[1]
+        tsph_b = t_e_b[2]
+        tsph = np.concatenate((tsph_e, tsph_b), axis = 0)
+        
+        ssph = S.pseudo_inv()
 
     def filter_map(self):
         for lam in self.cooling:
@@ -48,7 +61,7 @@ class N:
         self.Nsph = np.sum(ells+1)                                                                                                             
         self.cov_mat = np.ones((Npix*2, Npix*2), dtype = np.float64)
 
-    def make_matrix(self, matrix):
+    def make_matrix(self, matrix = None):
         """Sets N.cov_mat to be whatever is given as matrix in the input
 
         Parameters
@@ -126,7 +139,19 @@ class S:
     def __init__(self, cov_mat):
         self.cov_mat = cov_mat
 
-class cooling:
+    def inverse(self):
+        inv = np.linalg.inv(self.cov_mat)
+        return inv
+
+    def pseudo_inv(self):
+        """Returns the inverse of the first Nsph entries in the signal covariance and leaves the last Nsph elements alone.
+        """
+        inv_top = self.cov_mat[:Nsph]**(-1)
+        inv_bottom = self.cov_mat[Nsph:]
+        inv = np.concatenate((inv_top, inv_bottom), axis = 0)
+        return inv
+
+class Cooling:
     """Cooling object. This is how you construct a cooling schedule for lambda in the iterating process.
     """
 
