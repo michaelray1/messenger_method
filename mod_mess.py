@@ -4,20 +4,19 @@ import numpy as np
 import healpy as hp
 
 class Mmwf:
-    """wiener filter by messenger method object. 
 
-    Parameters:
-    N - Noise covariance object.
-    S - Signal covariance object
-    T - Messenger field covariance object
-    cooling - Cooling schedule object
-    """
 
     def __init__(self, N_cov, Sig_cov, Cooling):
+        """
+        Wiener filter object. Contains methods to filter using pure-B messenger method. In the future, we may add pure-E and pure-T options.
+        
+        Parameters
+        N_cov - Noise covariance object created with use of Noise_cov class below
+        Sig_cov - Signal covariance object created with the use of Sig_cov class below
+        Cooling - Cooling schedule object created with the use of Cooling class below"""
         self.N_cov = Noise_cov
         self.Sig_cov = Sig_cov
         self.cooling = Cooling
-        self.T = N_cov.T
         self.Nbar = N_cov.Nbar
 
     def mat_inverse(self, matrix):
@@ -32,7 +31,7 @@ class Mmwf:
         Parameters
         lam - Give a scalar that represents lambda in the messenger method equations
         s - Give a signal that represents s in the pixel domain. This should be size Npix * 2
-        data - Give a vector that is 3 by Npix in size. This is the I,Q,U map being filtered and data should be in the order of I,Q,U."""
+        data - Give a numpy array of size 3 by Npix. This is the I,Q,U map being filtered and data should be in the order of I,Q,U."""
         
         data_qu = data[self.N.Npix:]
         def solve_pixeqn(self):
@@ -40,7 +39,7 @@ class Mmwf:
             return t
         
         def solve_spheqn(self, tsph):
-            sig = np.matmul(mat_inverse(self.Sig_cov.pseudo_inv() + self.N_cov.lamTsph_inverse(lam), self.N_cov.invTsph_times(lam, tsph))
+            sig = np.matmul(mat_inverse(self.Sig_cov.pseudo_inv() + self.N_cov.lamTsph_inverse(lam), self.N_cov.invTsph_times(lam, tsph)))
             return sig
 
         tpix = solve_pixeqn()
@@ -61,30 +60,40 @@ class Mmwf:
 
 
     def filter_map_pureB(self, data):
+        """This function calls the do_iteration function with different values of lambda, while updating the signal reconstruction at each iteration. The end result is a wiener filtered set of alm's.
+        
+        Parameters
+        data - Give the map that you want to filter. This will be a numpy array of size 3 by Npix. Data should be in the order of I,Q,U."""
         s = np.zeros(self.N_cov.Npix * 2)
         for lam in self.Cooling.lam_list:
             s = self.do_iteration(lam, s, data)
         s_final = np.matmul(np.matmul(self.Sig_cov.S, self.Sig_cov.pseudo_inv()), s)
+        
 
 
 class Noise_cov:
     """Noise covariance object.
 
     Parameters
-    cov_mat - Noise covariance matrix as a numpy array. It will be size NPIX by NPIX, or size NPIX by one if it is diagonal.
+    Nside - Noise covariance matrix as a numpy array. It will be size NPIX by NPIX, or size NPIX by one if it is diagonal.
     """
 
 
-    def __init__(self, Npix):
-        self.Npix = Npix
-        self.Nside = np.sqrt(Npix/12)
+    def __init__(self, Nside):
+        """Initializes noise covariance object.
+        
+        Parameters
+        Nside - Give an integer that is the nside of your map.
+        """
+        self.Nside = Nside
+        self.Npix = 12*Nside**2
         self.ellmax = 3*self.Nside**2
         ells = np.arange(self.ellmax)                                                                                                                       
         self.Nsph = np.sum(ells+1)
 
 
     def make_matrix(self, matrix = None):
-        """Sets N.cov_mat to be whatever is given as matrix in the input
+        """Sets Noise_cov.N to be whatever is given as matrix in the input. Noise_cov.N is the full noise covariance matrix. This also fixes the T covariance matrix (in both the pixel and spherical harmonic domain) and the Nbar covariance matrix.
 
         Parameters
         matrix - Give the noise covariance matrix you want to use. Size of matrix should be Npix*2 by Npix*2
@@ -99,7 +108,7 @@ class Noise_cov:
     def N_inverse(self):
         """Returns the inverse of the noise covariance matrix
         """
-        inv = np.linalg.inv(self.cov_mat)
+        inv = np.linalg.inv(self.N)
         return inv
 
 
@@ -111,7 +120,7 @@ class Noise_cov:
 
 
     def T_inverse(self):
-        """Computes the inverse of the T matrix
+        """Computes the inverse of the T covariance matrix
         """
         inv = np.linalg.inv(self.T)
         return T
@@ -145,6 +154,7 @@ class Noise_cov:
         Give a scalar value for lam."""
         return np.matmul(lamTpix_inverse(lam), x)
 
+
     def invTsph_times(self, lam, x):
         """Returns the matrix product of (lam * T_sph)**(-1) with the given matrix x.
         Give a scalar for lam"""
@@ -152,17 +162,20 @@ class Noise_cov:
 
 
 class Sig_cov:
-    """Signal covariance object.
 
-    Parameters
-    S - Signal covariance matrix as a numpy array. It will be size NPIX by NPIX, or size NPIX by one if it is diagonal.
-    """
 
     def __init__(self, S):
+        """Initializes signal covariance object.
+        
+        Parameters
+        S - Signal covariance matrix as a numpy array. It should be Npix by Npix.
+        """
         self.S = S
 
 
     def inverse(self):
+        """Computes the inverse of the signal covariance matrix
+        """
         inv = np.linalg.inv(self.S)
         return inv
 
@@ -183,6 +196,11 @@ class Cooling:
 
     
     def __init__(self, lam_list = None):
+        """Initializes Cooling object. Cooling object holds the information about how to adjust lambda when iterating.
+        
+        Parameters
+        lam_list - Give a numpy array that is the list of lambda values you want to feed through the messenger method algorithm. The final value should be one, since at lambda equals one, the messenger method equations reduce to the wiener filter.
+        """
         self.lam_list = lam_list
         
 
