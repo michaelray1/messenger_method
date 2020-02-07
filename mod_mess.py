@@ -14,14 +14,22 @@ class Mmwf:
         N_cov - Noise covariance object created with use of Noise_cov class below
         Sig_cov - Signal covariance object created with the use of Sig_cov class below
         Cooling - Cooling schedule object created with the use of Cooling class below"""
-        self.N_cov = Noise_cov
+        
+        """Check for consistency between sizes of noise and signal covariance"""
+        if np.shape(N_cov.N) == np.shape(Sig_cov.S):
+            pass
+        else:
+            raise ValueError("Noise and Signal covariance matrices are different shapes. They must be the same shape")
+
+        self.N_cov = N_cov
         self.Sig_cov = Sig_cov
         self.cooling = Cooling
         self.Nbar = N_cov.Nbar
 
-    def mat_inverse(self, matrix):
+
+    def mat_inversez(self, matrix):
         """Computes the inverse of the given matrix"""
-        inv = np.linalg.inverse(matrix)
+        inv = np.linalg.inv(matrix)
         return inv
 
 
@@ -35,17 +43,23 @@ class Mmwf:
         
         data_qu = data[self.N.Npix:]
         def solve_pixeqn(self):
-            t = np.matmul(mat_inverse(self.N_cov.Nbar_inverse() + self.N_cov.lamTpix_inverse(lam)), self.N_cov.Nbarinv_times(data_qu) + self.N_cov.invTpix_times(lam, s))
+            if self.N_cov.N.is_diagonal == False:
+                t = np.matmul(mat_inverse(self.N_cov.Nbar_inverse() + self.N_cov.lamTpix_inverse(lam)), self.N_cov.Nbarinv_times(data_qu) + self.N_cov.invTpix_times(lam, s))
+            else:
+                t = (self.N_cov.Nbar_inverse() + self.N_cov.lamTpix_inverse(lam)) ** (-1) * (self.N_cov.Nbar_inverse() * data_qu + self.N_cov.lamTpix_inverse(lam) * s)
             return t
         
         def solve_spheqn(self, tsph):
-            sig = np.matmul(mat_inverse(self.Sig_cov.pseudo_inv() + self.N_cov.lamTsph_inverse(lam), self.N_cov.invTsph_times(lam, tsph)))
+            if self.Sig_cov.S.is_diagonal == False:
+                sig = np.matmul(mat_inverse(self.Sig_cov.pseudo_inv() + self.N_cov.lamTsph_inverse(lam), self.N_cov.invTsph_times(lam, tsph)))
+            else:
+                sig = (self.Sig_cov.inverse() + self.N_cov.lamTsph_inverse(lam)) ** (-1) * self.N_cov.lamTsph_inverse(lam) * tsph
             return sig
 
         tpix = solve_pixeqn()
         tpix_q = tpix[:NPIX]
         tpix_u = tpix[NPIX:]
-        t_e_b = hp.map2alm((data[0,:], tpix_q, tpix_u), lmax=ELLMAX, pol=True)
+        t_e_b = hp.map2alm((data[0,:], tpix_q, tpix_u), lmax=self.N_cov.ellmax, pol=True)
         tsph_e = t_e_b[1]
         tsph_b = t_e_b[2]
         tsph = np.concatenate((tsph_e, tsph_b), axis = 0)
@@ -67,7 +81,16 @@ class Mmwf:
         s = np.zeros(self.N_cov.Npix * 2)
         for lam in self.Cooling.lam_list:
             s = self.do_iteration(lam, s, data)
-        s_final = np.matmul(np.matmul(self.Sig_cov.S, self.Sig_cov.pseudo_inv()), s)
+
+        """Transform s from pixel basis to spherical harmonic domain"""
+        ssph = hp.map2alm((data[0,:], s[:Npix], s[Npix:]), lmax = self.N_cov.ellmax, pol = True)
+
+        if self.N_cov.is_diagonal == False:
+            s_final = np.matmul(np.matmul(self.Sig_cov.S, self.Sig_cov.pseudo_inv()), ssph)
+        else:
+            s_final = self.Sig_cov.S * self.Sig_cov.pseudo_inv * ssph
+
+        return s_final
         
 
 
@@ -96,33 +119,54 @@ class Noise_cov:
         """Sets Noise_cov.N to be whatever is given as matrix in the input. Noise_cov.N is the full noise covariance matrix. This also fixes the T covariance matrix (in both the pixel and spherical harmonic domain) and the Nbar covariance matrix.
 
         Parameters
-        matrix - Give the noise covariance matrix you want to use. Size of matrix should be Npix*2 by Npix*2
+        matrix - Give the noise covariance matrix you want to use. Size of matrix should be Npix*2 by Npix*2 if Noise_cov.is_diagonal is False. If Noise_cov.is_diagonal is True, then matrix should be size Npix*2
         """
+        if len(np.shape(matrix)) == 1:
+            self.is_diagonal = True
+        else:
+            self.is_diagonal = False
+
         self.N = matrix
-        tau = np.min(np.diagonal(self.cov_mat))
-        self.T_pix = np.identity(self.Npix * 2) * tau
-        self.Nbar = self.N - self.T_pix
-        self.T_sph = T_pix * 4 * np.pi / self.Npix
+
+        if self.isdiagonal == False:
+            tau = np.min(np.diagonal(self.N))
+            self.T_pix = np.identity(self.Npix * 2) * tau
+            self.Nbar = self.N - self.T_pix
+            self.T_sph = T_pix * 4 * np.pi / self.Npix
+        else:
+            tau = np.min(self.N)
+            self.T_pix = np.ones(self.Npix*2) * tau
+            self.Nbar = self.N - self.T_pix
+            self.T_sph = T_pix * 4 * np.pi / self.Npix
 
 
     def N_inverse(self):
         """Returns the inverse of the noise covariance matrix
         """
-        inv = np.linalg.inv(self.N)
+        if self.is_diagonal == False:
+            inv = np.linalg.inv(self.N)
+        else:
+            inv = self.N ** (-1)
         return inv
 
 
     def Nbar_inverse(self):
         """Computes the inverse of the Nbar matrix
         """
-        inv = np.linalg.inv(self.Nbar)
+        if self.is_diagonal == False:
+            inv = np.linalg.inv(self.Nbar)
+        else:
+            inv = self.Nbar ** (-1)
         return inv
 
 
     def T_inverse(self):
         """Computes the inverse of the T covariance matrix
         """
-        inv = np.linalg.inv(self.T)
+        if self.is_diagonal == False:
+            inv = np.linalg.inv(self.T)
+        else:
+            inv = self.T ** (-1)
         return T
 
 
@@ -131,7 +175,10 @@ class Noise_cov:
         
         Parameters
         lam - Give a scalar quantity"""
-        inv = np.linalg.inv(lam * self.T_pix)
+        if self.is_diagonal == False:
+            inv = np.linalg.inv(lam * self.T_pix)
+        else:
+            inv = (lam * self.T_pix) ** (-1)
         return inv
 
 
@@ -140,7 +187,10 @@ class Noise_cov:
         
         Parameters
         lam - Give a scalar quantity"""
-        inv = np.linalg.inv(lam * self.T_sph)
+        if self.is_diagonal == False:
+            inv = np.linalg.inv(lam * self.T_sph)
+        else:
+            inv = (lam * self.T_sph) ** (-1)
         return inv
 
 
@@ -164,28 +214,47 @@ class Noise_cov:
 class Sig_cov:
 
 
-    def __init__(self, S):
+    def __init__(self):
         """Initializes signal covariance object.
         
         Parameters
         S - Signal covariance matrix as a numpy array. It should be Npix by Npix.
         """
-        self.S = S
+        pass
+
+    def make_matrix(self, matrix):
+        """Creates the signal covariance matrix and saves it as Sig_cov.S
+
+        Parameters
+        matrix - Give the signal covariance matrix. This is either Npix*2 by Npix*2 if the matrix is not diagonal, or size Npix*2 if it is diagonal.
+        """
+        if len(np.shape(matrix)) == 1:
+            self.is_diagonal = True
+        else:
+            self.is_diagonal = False
+        
+        self.S = matrix
 
 
     def inverse(self):
         """Computes the inverse of the signal covariance matrix
         """
-        inv = np.linalg.inv(self.S)
+        if self.is_diagonal == False:
+            inv = np.linalg.inv(self.S)
+        else:
+            inv = self.S ** (-1)
         return inv
 
 
     def pseudo_inv(self):
         """Returns the inverse of the first Nsph entries in the signal covariance and sets the last Nsph elements to zero. This is for a pure B estimator. Thus, it is set up so the first Nsph entries in Sig_cov.S are the E mode components and the last Nsph entries are the B mode components.
         """
-        inv_top = self.S[:Nsph] * 0.0
-        inv_bottom = self.S[Nsph:]**(-1)
-        inv = np.concatenate((inv_top, inv_bottom), axis = 0)
+        if self.is_diagonal == False:
+            raise ValueError('Signal covariance is not diagonal, you cannot compute pseudo inverse of non-diagonal signal')
+        else:
+            inv_top = self.S[:Nsph] * 0.0
+            inv_bottom = self.S[Nsph:]**(-1)
+            inv = np.concatenate((inv_top, inv_bottom), axis = 0)
         return inv
 
     
