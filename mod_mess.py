@@ -16,18 +16,14 @@ class Mmwf:
         Cooling - Cooling schedule object created with the use of Cooling class below"""
         
         """Check for consistency between sizes of noise and signal covariance"""
-        if np.shape(N_cov.N) == np.shape(Sig_cov.S):
-            pass
-        else:
-            raise ValueError("Noise and Signal covariance matrices are different shapes. They must be the same shape")
 
         self.N_cov = N_cov
         self.Sig_cov = Sig_cov
-        self.cooling = Cooling
+        self.Cooling = Cooling
         self.Nbar = N_cov.Nbar
 
 
-    def mat_inversez(self, matrix):
+    def mat_inverse(self, matrix):
         """Computes the inverse of the given matrix"""
         inv = np.linalg.inv(matrix)
         return inv
@@ -41,7 +37,7 @@ class Mmwf:
         s - Give a signal that represents s in the pixel domain. This should be size Npix * 2
         data - Give a numpy array of size 3 by Npix. This is the I,Q,U map being filtered and data should be in the order of I,Q,U."""
         
-        data_qu = data[self.N.Npix:]
+        data_qu = data[self.N_cov.Npix:]
         def solve_pixeqn(self):
             if self.N_cov.N.is_diagonal == False:
                 t = np.matmul(mat_inverse(self.N_cov.Nbar_inverse() + self.N_cov.lamTpix_inverse(lam)), self.N_cov.Nbarinv_times(data_qu) + self.N_cov.invTpix_times(lam, s))
@@ -56,7 +52,7 @@ class Mmwf:
                 sig = (self.Sig_cov.inverse() + self.N_cov.lamTsph_inverse(lam)) ** (-1) * self.N_cov.lamTsph_inverse(lam) * tsph
             return sig
 
-        tpix = solve_pixeqn()
+        tpix = self.do_iteration.solve_pixeqn()
         tpix_q = tpix[:NPIX]
         tpix_u = tpix[NPIX:]
         t_e_b = hp.map2alm((data[0,:], tpix_q, tpix_u), lmax=self.N_cov.ellmax, pol=True)
@@ -64,7 +60,7 @@ class Mmwf:
         tsph_b = t_e_b[2]
         tsph = np.concatenate((tsph_e, tsph_b), axis = 0)
         
-        ssph = solve_spheqn(tsph)
+        ssph = self.do_iteration.solve_spheqn(tsph)
         ssph_e = ssph[:self.N_cov.Nsph]
         ssph_b = ssph[self.N_cov.Nsph:]
         weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), nside = self.N_cov.Nside, lmax = self.N_cov.ellmax, pol=True)
@@ -110,7 +106,7 @@ class Noise_cov:
         """
         self.Nside = Nside
         self.Npix = 12*Nside**2
-        self.ellmax = 3*self.Nside**2
+        self.ellmax = 3*self.Nside - 1
         ells = np.arange(self.ellmax)                                                                                                                       
         self.Nsph = np.sum(ells+1)
 
@@ -128,7 +124,7 @@ class Noise_cov:
 
         self.N = matrix
 
-        if self.isdiagonal == False:
+        if self.is_diagonal == False:
             tau = np.min(np.diagonal(self.N))
             self.T_pix = np.identity(self.Npix * 2) * tau
             self.Nbar = self.N - self.T_pix
@@ -137,7 +133,7 @@ class Noise_cov:
             tau = np.min(self.N)
             self.T_pix = np.ones(self.Npix*2) * tau
             self.Nbar = self.N - self.T_pix
-            self.T_sph = T_pix * 4 * np.pi / self.Npix
+            self.T_sph = self.T_pix * 4 * np.pi / self.Npix
 
 
     def N_inverse(self):
@@ -218,7 +214,7 @@ class Sig_cov:
         """Initializes signal covariance object.
         
         Parameters
-        S - Signal covariance matrix as a numpy array. It should be Npix by Npix.
+        S - Signal covariance matrix as a numpy array. It should be Nsph*2 by Nsph*2 if it is dense. It should be just Nsph*2 if it is diagonal.
         """
         pass
 
