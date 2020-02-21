@@ -23,6 +23,21 @@ class Mmwf:
         self.Nbar = N_cov.Nbar
 
 
+    def solve_pixeqn(self):
+        """Solves the first messenger method equation, which is done in the pixel domain."""
+        if self.N_cov.is_diagonal == False:
+            t = np.matmul(mat_inverse(self.N_cov.Nbar_inverse() + self.N_cov.lamTpix_inverse(lam)), self.N_cov.Nbarinv_times(data_qu) + self.N_cov.invTpix_times(lam, s))
+        else:
+            t = (self.N_cov.Nbar_inverse() + self.N_cov.lamTpix_inverse(lam)) ** (-1) * (self.N_cov.Nbar_inverse() * data_qu + self.N_cov.lamTpix_inverse(lam) * s)
+        return t
+
+    def solve_spheqn(self, tsph):
+        if self.Sig_cov.is_diagonal == False:
+            sig = np.matmul(mat_inverse(self.Sig_cov.pseudo_inv() + self.N_cov.lamTsph_inverse(lam), self.N_cov.invTsph_times(lam, tsph)))
+        else:
+            sig = (self.Sig_cov.inverse() + self.N_cov.lamTsph_inverse(lam)) ** (-1) * self.N_cov.lamTsph_inverse(lam) * tsph
+        return sig
+
     def mat_inverse(self, matrix):
         """Computes the inverse of the given matrix"""
         inv = np.linalg.inv(matrix)
@@ -38,29 +53,16 @@ class Mmwf:
         data - Give a numpy array of size 3 by Npix. This is the I,Q,U map being filtered and data should be in the order of I,Q,U."""
         
         data_qu = data[self.N_cov.Npix:]
-        def solve_pixeqn(self):
-            if self.N_cov.N.is_diagonal == False:
-                t = np.matmul(mat_inverse(self.N_cov.Nbar_inverse() + self.N_cov.lamTpix_inverse(lam)), self.N_cov.Nbarinv_times(data_qu) + self.N_cov.invTpix_times(lam, s))
-            else:
-                t = (self.N_cov.Nbar_inverse() + self.N_cov.lamTpix_inverse(lam)) ** (-1) * (self.N_cov.Nbar_inverse() * data_qu + self.N_cov.lamTpix_inverse(lam) * s)
-            return t
-        
-        def solve_spheqn(self, tsph):
-            if self.Sig_cov.S.is_diagonal == False:
-                sig = np.matmul(mat_inverse(self.Sig_cov.pseudo_inv() + self.N_cov.lamTsph_inverse(lam), self.N_cov.invTsph_times(lam, tsph)))
-            else:
-                sig = (self.Sig_cov.inverse() + self.N_cov.lamTsph_inverse(lam)) ** (-1) * self.N_cov.lamTsph_inverse(lam) * tsph
-            return sig
 
-        tpix = self.do_iteration.solve_pixeqn()
-        tpix_q = tpix[:NPIX]
-        tpix_u = tpix[NPIX:]
+        tpix = self.solve_pixeqn()
+        tpix_q = tpix[:self.N_cov.Npix]
+        tpix_u = tpix[self.N_cov.Npix:]
         t_e_b = hp.map2alm((data[0,:], tpix_q, tpix_u), lmax=self.N_cov.ellmax, pol=True)
         tsph_e = t_e_b[1]
         tsph_b = t_e_b[2]
         tsph = np.concatenate((tsph_e, tsph_b), axis = 0)
         
-        ssph = self.do_iteration.solve_spheqn(tsph)
+        ssph = self.solve_spheqn(tsph)
         ssph_e = ssph[:self.N_cov.Nsph]
         ssph_b = ssph[self.N_cov.Nsph:]
         weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), nside = self.N_cov.Nside, lmax = self.N_cov.ellmax, pol=True)
@@ -222,7 +224,7 @@ class Sig_cov:
         """Creates the signal covariance matrix and saves it as Sig_cov.S
 
         Parameters
-        matrix - Give the signal covariance matrix. This is either Npix*2 by Npix*2 if the matrix is not diagonal, or size Npix*2 if it is diagonal.
+        matrix - Give the signal covariance matrix. This is either Nsph*2 by Nsph*2 if the matrix is not diagonal, or size Nsph*2 if it is diagonal.
         """
         if len(np.shape(matrix)) == 1:
             self.is_diagonal = True
