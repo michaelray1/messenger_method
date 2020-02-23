@@ -86,11 +86,12 @@ class Mmwf:
 
         """Transform s from pixel basis to spherical harmonic domain"""
         ssph = hp.map2alm((data[0,:], s[:self.N_cov.Npix], s[self.N_cov.Npix:]), lmax = self.N_cov.ellmax, pol = True)
+        ssph_eb = np.concatenate((ssph[0,:], ssph[1,:]), axis=0)
 
         if self.N_cov.is_diagonal == False:
-            s_final = np.matmul(np.matmul(self.Sig_cov.S, self.Sig_cov.pseudo_inv()), ssph)
+            s_final = np.matmul(np.matmul(self.Sig_cov.S, self.Sig_cov.pseudo_inv()), ssph_eb)
         else:
-            s_final = self.Sig_cov.S * self.Sig_cov.pseudo_inv * ssph
+            s_final = self.Sig_cov.S * self.Sig_cov.pseudo_inv() * ssph_eb
 
         return s_final
         
@@ -232,8 +233,10 @@ class Sig_cov:
         """
         if len(np.shape(matrix)) == 1:
             self.is_diagonal = True
+            self.Nsph = int(len(matrix)/2)
         else:
             self.is_diagonal = False
+            self.Nsph = int(len(np.diagonal(matrix))/2)
         
         self.S = matrix
 
@@ -252,10 +255,10 @@ class Sig_cov:
         """Returns the inverse of the first Nsph entries in the signal covariance and sets the last Nsph elements to zero. This is for a pure B estimator. Thus, it is set up so the first Nsph entries in Sig_cov.S are the E mode components and the last Nsph entries are the B mode components.
         """
         if self.is_diagonal == False:
-            raise ValueError('Signal covariance is not diagonal, you cannot compute pseudo inverse of non-diagonal signal')
+            raise ValueError('Signal covariance is not diagonal, pseudo inverse not supported.')
         else:
-            inv_top = self.S[:Nsph] * 0.0
-            inv_bottom = self.S[Nsph:]**(-1)
+            inv_top = self.S[:self.Nsph] * 0.0
+            inv_bottom = self.S[self.Nsph:]**(-1)
             inv = np.concatenate((inv_top, inv_bottom), axis = 0)
         return inv
 
