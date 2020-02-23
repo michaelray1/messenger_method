@@ -23,15 +23,16 @@ class Mmwf:
         self.Nbar = N_cov.Nbar
 
 
-    def solve_pixeqn(self):
-        """Solves the first messenger method equation, which is done in the pixel domain."""
+    def solve_pixeqn(self, lam, data_qu, s):
+        """Solves the first messenger method equation, which is done in the pixel domain. You must provide lambda, QU input data, and the current signal reconstruction in pixel space."""
         if self.N_cov.is_diagonal == False:
             t = np.matmul(mat_inverse(self.N_cov.Nbar_inverse() + self.N_cov.lamTpix_inverse(lam)), self.N_cov.Nbarinv_times(data_qu) + self.N_cov.invTpix_times(lam, s))
         else:
             t = (self.N_cov.Nbar_inverse() + self.N_cov.lamTpix_inverse(lam)) ** (-1) * (self.N_cov.Nbar_inverse() * data_qu + self.N_cov.lamTpix_inverse(lam) * s)
         return t
 
-    def solve_spheqn(self, tsph):
+    def solve_spheqn(self, lam, tsph):
+        """Solves the second messenger method equation, which is done in the spherical harmonic domain. You must provide lambda and the current messenger field vector in spherical harmonic space."""
         if self.Sig_cov.is_diagonal == False:
             sig = np.matmul(mat_inverse(self.Sig_cov.pseudo_inv() + self.N_cov.lamTsph_inverse(lam), self.N_cov.invTsph_times(lam, tsph)))
         else:
@@ -40,7 +41,10 @@ class Mmwf:
 
     def mat_inverse(self, matrix):
         """Computes the inverse of the given matrix"""
-        inv = np.linalg.inv(matrix)
+        if len(np.shape(matrix)) == 1:
+            inv = matrix**(-1)
+        else:
+            inv = np.linalg.inv(matrix)
         return inv
 
 
@@ -52,9 +56,9 @@ class Mmwf:
         s - Give a signal that represents s in the pixel domain. This should be size Npix * 2
         data - Give a numpy array of size 3 by Npix. This is the I,Q,U map being filtered and data should be in the order of I,Q,U."""
         
-        data_qu = data[self.N_cov.Npix:]
+        data_qu = np.concatenate((data[0,:], data[1,:]), axis=0)
 
-        tpix = self.solve_pixeqn()
+        tpix = self.solve_pixeqn(lam = lam, data_qu = data_qu, s = s)
         tpix_q = tpix[:self.N_cov.Npix]
         tpix_u = tpix[self.N_cov.Npix:]
         t_e_b = hp.map2alm((data[0,:], tpix_q, tpix_u), lmax=self.N_cov.ellmax, pol=True)
@@ -62,7 +66,7 @@ class Mmwf:
         tsph_b = t_e_b[2]
         tsph = np.concatenate((tsph_e, tsph_b), axis = 0)
         
-        ssph = self.solve_spheqn(tsph)
+        ssph = self.solve_spheqn(lam = lam, tsph = tsph)
         ssph_e = ssph[:self.N_cov.Nsph]
         ssph_b = ssph[self.N_cov.Nsph:]
         weiner_iqu = hp.alm2map((t_e_b[0], ssph_e, ssph_b), nside = self.N_cov.Nside, lmax = self.N_cov.ellmax, pol=True)
@@ -81,7 +85,7 @@ class Mmwf:
             s = self.do_iteration(lam, s, data)
 
         """Transform s from pixel basis to spherical harmonic domain"""
-        ssph = hp.map2alm((data[0,:], s[:Npix], s[Npix:]), lmax = self.N_cov.ellmax, pol = True)
+        ssph = hp.map2alm((data[0,:], s[:self.N_cov.Npix], s[self.N_cov.Npix:]), lmax = self.N_cov.ellmax, pol = True)
 
         if self.N_cov.is_diagonal == False:
             s_final = np.matmul(np.matmul(self.Sig_cov.S, self.Sig_cov.pseudo_inv()), ssph)
@@ -109,7 +113,7 @@ class Noise_cov:
         self.Nside = Nside
         self.Npix = 12*Nside**2
         self.ellmax = 3*self.Nside - 1
-        ells = np.arange(self.ellmax)                                                                                                                       
+        ells = np.arange(self.ellmax+1)
         self.Nsph = np.sum(ells+1)
 
 
@@ -127,15 +131,15 @@ class Noise_cov:
         self.N = matrix
 
         if self.is_diagonal == False:
-            tau = np.min(np.diagonal(self.N))
-            self.T_pix = np.identity(self.Npix * 2) * tau
+            self.tau = np.min(np.diagonal(self.N))
+            self.T_pix = np.identity(self.Npix * 2) * self.tau
             self.Nbar = self.N - self.T_pix
             self.T_sph = T_pix * 4 * np.pi / self.Npix
         else:
-            tau = np.min(self.N)
-            self.T_pix = np.ones(self.Npix*2) * tau
+            self.tau = np.min(self.N)
+            self.T_pix = np.ones(self.Npix*2) * self.tau
             self.Nbar = self.N - self.T_pix
-            self.T_sph = self.T_pix * 4 * np.pi / self.Npix
+            self.T_sph = self.tau * np.ones(self.Nsph * 2) * (4.0 * np.pi) / self.Npix
 
 
     def N_inverse(self):
