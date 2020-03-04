@@ -36,7 +36,7 @@ class Mmwf:
         if self.Sig_cov.is_diagonal == False:
             sig = np.matmul(mat_inverse(self.Sig_cov.pseudo_inv() + self.N_cov.lamTsph_inverse(lam), self.N_cov.invTsph_times(lam, tsph)))
         else:
-            sig = (self.Sig_cov.inverse() + self.N_cov.lamTsph_inverse(lam)) ** (-1) * self.N_cov.lamTsph_inverse(lam) * tsph
+            sig = (self.Sig_cov.pseudo_inv() + self.N_cov.lamTsph_inverse(lam)) ** (-1) * self.N_cov.lamTsph_inverse(lam) * tsph
         return sig
 
     def mat_inverse(self, matrix):
@@ -56,7 +56,7 @@ class Mmwf:
         s - Give a signal that represents s in the pixel domain. This should be size Npix * 2
         data - Give a numpy array of size 3 by Npix. This is the I,Q,U map being filtered and data should be in the order of I,Q,U."""
         
-        data_qu = np.concatenate((data[0,:], data[1,:]), axis=0)
+        data_qu = np.concatenate((data[1,:], data[2,:]), axis=0)
 
         tpix = self.solve_pixeqn(lam = lam, data_qu = data_qu, s = s)
         tpix_q = tpix[:self.N_cov.Npix]
@@ -86,7 +86,7 @@ class Mmwf:
 
         """Transform s from pixel basis to spherical harmonic domain"""
         ssph = hp.map2alm((data[0,:], s[:self.N_cov.Npix], s[self.N_cov.Npix:]), lmax = self.N_cov.ellmax, pol = True)
-        ssph_eb = np.concatenate((ssph[0,:], ssph[1,:]), axis=0)
+        ssph_eb = np.concatenate((ssph[1,:], ssph[2,:]), axis=0)
 
         if self.N_cov.is_diagonal == False:
             s_final = np.matmul(np.matmul(self.Sig_cov.S, self.Sig_cov.pseudo_inv()), ssph_eb)
@@ -134,12 +134,12 @@ class Noise_cov:
         if self.is_diagonal == False:
             self.tau = np.min(np.diagonal(self.N))
             self.T_pix = np.identity(self.Npix * 2) * self.tau
-            self.Nbar = self.N - self.T_pix
+            self.Nbar = self.N - 0.999*self.T_pix
             self.T_sph = T_pix * 4 * np.pi / self.Npix
         else:
             self.tau = np.min(self.N)
             self.T_pix = np.ones(self.Npix*2) * self.tau
-            self.Nbar = self.N - self.T_pix
+            self.Nbar = self.N - 0.999*self.T_pix
             self.T_sph = self.tau * np.ones(self.Nsph * 2) * (4.0 * np.pi) / self.Npix
 
 
@@ -259,6 +259,7 @@ class Sig_cov:
         else:
             inv_top = self.S[:self.Nsph] * 0.0
             inv_bottom = self.S[self.Nsph:]**(-1)
+            inv_bottom[np.where(np.isnan(inv_bottom))] = 0.0
             inv = np.concatenate((inv_top, inv_bottom), axis = 0)
         return inv
 
@@ -316,3 +317,40 @@ class Cooling:
         lam_list.append(1)
         lam_list = np.array(lam_list)
         return lam_list
+
+
+class data_processing:
+
+    """Data processing object. This object contains functions to take auto/cross spectra given alms, binning functions, etc."""
+
+    def __init__(self):
+        pass
+    
+
+    def take_spectra(alm1, alm2 = None, ellmax = 1536):
+        """This function takes in two lists of alms and returns the cross spectra between the two. If only one alm is given, it takes the autospectra.
+
+        Parameters
+        alm1 - Give one of the arrays of alms. Should be size Nsph
+        alm2 - Give the second array of alms. Should also be size Nsph
+        ellmax - Give an integer that specifies the length of the output power spectrum"""
+
+        if alm2.all() == None:
+            cl = hp.alm2cl(alm1, lmax = ellmax)
+        else:
+            cl = hp.alm2cl(alm1, alms2 = alm2, lmax = ellmax)
+        return cl
+
+    def bin_spectrum(spectrum, bin_edges):
+        """This function takes in a power spectrum and returns a binned power spectrum
+
+        Parameters
+        spectrum - Give an array of numbers that is the power spectrum you wish to bin
+        bin_edges - Give an array of values which specify the bins. The spectrum will be averaged over the ell values given. For example, bin_edges = [1,5] means bin_spectrum will return the spectrum averaged
+            from ell=1 to ell=5
+        """
+
+        binned_spec = np.empty([len(bin_edges) - 1])
+        for i in range(len(bin_edges) - 1):
+            binned_spec[i] = np.mean(spectrum[bin_edges[i]:bin_edges[i+1]])
+        return binned_spec
