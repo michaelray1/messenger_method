@@ -22,6 +22,11 @@ class Mmwf:
         self.Cooling = Cooling
         self.Nbar = N_cov.Nbar
 
+        if self.N_cov.Nsph == self.Sig_cov.Nsph:
+            pass
+        else:
+            raise ValueError("Number of spherical harmonic coefficients calculated using noise covariance matrix does not match the number of spherical harmonic coefficients calculated using signal covariance matrix. Check that the sizes of signal and noise covariance matrices are consistent.")
+
 
     def solve_pixeqn(self, lam, data_qu, s):
         """Solves the first messenger method equation, which is done in the pixel domain. You must provide lambda, QU input data, and the current signal reconstruction in pixel space."""
@@ -199,19 +204,31 @@ class Noise_cov:
 
     def Nbarinv_times(self, x):
         """Returns the matrix product of the noise covariance matrix with the given matrix x"""
-        return np.matmul(self.Nbar_inverse(), x)
+        if self.is_diagonal == False:
+            product = np.matmul(self.Nbar_inverse(), x)
+        else:
+            product = self.Nbar_inverse() * x
+        return product
 
 
     def invTpix_times(self, lam, x):
         """Returns the matrix product of (lam * T_pix)**(-1) with the given matrix x.
         Give a scalar value for lam."""
-        return np.matmul(lamTpix_inverse(lam), x)
+        if self.is_diagonal == False:
+            product = np.matmul(lamTpix_inverse(lam), x)
+        else:
+            product = lamTpix_inverse(lam) * x
+        return product
 
 
     def invTsph_times(self, lam, x):
         """Returns the matrix product of (lam * T_sph)**(-1) with the given matrix x.
         Give a scalar for lam"""
-        return np.matmul(lamTsph_inverse(lam), x)
+        if self.is_diagonal == False:
+            product = np.matmul(lamTsph_inverse(lam), x)
+        else:
+            product = lamTpix_inverse(lam) * x
+        return product
 
 
 class Sig_cov:
@@ -290,7 +307,7 @@ class Cooling:
         lam_list = []
         lam_list.append(1300)
         lam = 100
-        while lam > 1:
+        while lam >= 1:
             lam_list.append(lam)
             lam = lam*eta
         i = 0
@@ -335,10 +352,7 @@ class data_processing:
         alm2 - Give the second array of alms. Should also be size Nsph
         ellmax - Give an integer that specifies the length of the output power spectrum"""
 
-        if alm2.all() == None:
-            cl = hp.alm2cl(alm1, lmax = ellmax)
-        else:
-            cl = hp.alm2cl(alm1, alms2 = alm2, lmax = ellmax)
+        cl = hp.alm2cl(alm1, alms2 = alm2, lmax = ellmax)
         return cl
 
     def bin_spectrum(spectrum, bin_edges):
