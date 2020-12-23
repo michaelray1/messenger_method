@@ -335,6 +335,17 @@ class Cooling:
         lam_list = np.array(lam_list)
         return lam_list
 
+    
+    def custom_lam(self, lamlist):
+        """This functions returns a list of lambda values as a numpy array that can be used in the iterative scheme.
+        This simply takes the input lamlist, converts it to a numpy array and returns it back.
+
+        Parameters
+        lamlist - Give a list of lambda values to be used when iterating in the messenger method"""
+
+        lamlist = np.array(lamlist)
+        return lamlist
+    
 
 class data_processing:
 
